@@ -1,0 +1,30 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# 环境变量（含 API Key）
+.env
+
+# ChromaDB 数据库 + clone 的仓库（体积大，本地生成）
+repo_knowledge_base/
+
+# eval 生成结果（JSON 原始数据，txt 报告可酌情保留）
+eval/results_*.json
+eval/results_*.txt
+
+# Claude Code 私有 session 数据
+.claude/
+
+# macOS
+.DS_Store
+
+# 截图
+*.png
+*.jpg
+*.jpeg
+
+# 笔记
+*_notes/
