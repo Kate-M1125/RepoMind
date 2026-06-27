@@ -44,8 +44,8 @@ def _walk_tree(path: Path, depth: int, prefix: str = "") -> list[str]:
     return lines
 
 
-def build_project_map(state: IssueState) -> dict:
-    url = state["issue_url"]
+def build_project_map(state) -> dict:
+    url = state.get("issue_url") or state.get("pr_url", "")
     parts = url.rstrip("/").split("/")
     owner, repo = parts[-4], parts[-3]
     cache_key = f"{owner}/{repo}"

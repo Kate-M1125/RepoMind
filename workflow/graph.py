@@ -9,7 +9,7 @@ from workflow.nodes import (
     build_project_map,
     human_gate,
     memory_retrieve, memory_save,
-    retrieve_context,
+    prepare_context, dispatch_context_gather, gather_context_part, merge_context,
     analyze_bug, analyze_feature, answer_question,
     reflect,
     generate_report,
@@ -59,9 +59,11 @@ def build_graph():
     graph.add_node("detect_existing",    _wrap("detect_existing",    detect_existing))
     graph.add_node("classify_fix",       _wrap("classify_fix",       classify_fix))
     graph.add_node("human_gate",         _wrap("human_gate",         human_gate))
-    graph.add_node("memory_retrieve",  _wrap("memory_retrieve",  memory_retrieve))
-    graph.add_node("retrieve_context", _wrap("retrieve_context", retrieve_context))
-    graph.add_node("analyze_bug",      _wrap("analyze_bug",      analyze_bug))
+    graph.add_node("memory_retrieve",       _wrap("memory_retrieve",  memory_retrieve))
+    graph.add_node("prepare_context",       _wrap("prepare_context",  prepare_context))
+    graph.add_node("gather_context_part",   _wrap("gather_context_part", gather_context_part))
+    graph.add_node("merge_context",         _wrap("merge_context",    merge_context))
+    graph.add_node("analyze_bug",           _wrap("analyze_bug",      analyze_bug))
     graph.add_node("analyze_feature",  _wrap("analyze_feature",  analyze_feature))
     graph.add_node("answer_question",  _wrap("answer_question",  answer_question))
     graph.add_node("reflect",          _wrap("reflect",          reflect))
@@ -91,12 +93,14 @@ def build_graph():
     # human_gate 批准后进入正常流程
     graph.add_edge("human_gate", "memory_retrieve")
 
-    # 查完记忆再检索代码上下文
-    graph.add_edge("memory_retrieve", "retrieve_context")
+    # 查完记忆 → 确保仓库已索引 → 三路并行收集上下文 → 合并
+    graph.add_edge("memory_retrieve", "prepare_context")
+    graph.add_conditional_edges("prepare_context", dispatch_context_gather)
+    graph.add_edge("gather_context_part", "merge_context")
 
     # bug 类先分类修复类型；feature 先检测是否已存在；其他直接分析
     graph.add_conditional_edges(
-        "retrieve_context",
+        "merge_context",
         decide_route,
         {
             "bug":      "classify_fix",

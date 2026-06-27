@@ -1,3 +1,6 @@
+from typing import TypedDict, Optional
+from langgraph.types import Send
+
 from workflow.state import IssueState
 from tools.github_api import parse_issue_url
 from core.llm.client import chat
@@ -33,7 +36,6 @@ def _rrf_merge(ranked_lists: list[list[str]], k: int = 60) -> list[str]:
 
 
 def _llm_identify_entry_points(title: str, body: str) -> list[str]:
-    """让 LLM 识别用户触发 bug 时调用的入口函数/方法名，返回精确的符号列表。"""
     prompt = f"""以下是一个 GitHub Issue。请找出用户触发这个 bug 时直接调用的函数名或方法名（1-3个）。
 
 Issue: {title}
@@ -54,17 +56,14 @@ Issue: {title}
 
 
 def _grep_entry_points(owner: str, repo: str, symbols: list[str]) -> str:
-    """grep 每个符号，返回找到的定义位置上下文。找不到返回空字符串。"""
     sections = []
     seen_files: set[str] = set()
     for sym in symbols:
         out = _grep_code(owner, repo, f"def {sym}|class {sym}|fn {sym}|func {sym}")
         if not out or "未找到" in out:
-            # 退而求其次：直接搜符号名（可能是变量/方法）
             out = _grep_code(owner, repo, sym)
         if not out or "未找到" in out:
             continue
-        # 读第一个命中文件的上下文
         for line in out.splitlines()[:3]:
             parts = line.split(":")
             if len(parts) < 2:
@@ -84,122 +83,53 @@ def _grep_entry_points(owner: str, repo: str, symbols: list[str]) -> str:
     return "\n\n---\n\n".join(sections)
 
 
-def retrieve_context(state: IssueState) -> dict:
-    owner, repo, _ = parse_issue_url(state["issue_url"])
-    ensure_repo_indexed(owner, repo)
-
-    # ── grep 优先：LLM 识别入口函数，精确定位调用链起点 ──
-    entry_points = _llm_identify_entry_points(state["title"], state.get("body", ""))
-    grep_context = ""
-    if entry_points:
-        grep_context = _grep_entry_points(owner, repo, entry_points)
-        if grep_context:
-            print(f"[Grep] LLM 识别入口 {entry_points}，找到入口代码")
-        else:
-            print(f"[Grep] LLM 识别入口 {entry_points}，但仓库中未找到定义，降级 RAG")
-
-    # ── RAG 兜底：grep 没找到足够内容时使用 ──
-    rag_collection = get_repo_collection(owner, repo)
-    title_query = state["title"]
-    type_query = f"{state.get('issue_type', '')} {state['body'][:150]}"
-    stack_ctx = state.get("stack_trace_context", "")
-    stack_query = stack_ctx[:300] if stack_ctx else None
-
-    # HyDE：让 LLM 生成"可能引发这个 bug 的代码形态"，用代码查代码，语义空间更匹配
+def _generate_hyde(state: dict) -> Optional[str]:
     try:
         hyde_prompt = (
             f"根据以下 GitHub Issue，写出最可能引发该 bug 的 Python/Rust 代码片段（20 行内）：\n"
-            f"{state['title']}\n{state.get('body','')[:300]}"
+            f"{state['title']}\n{state.get('body', '')[:300]}"
         )
-        hyde_doc = chat("你是一名擅长预测 bug 位置的工程师，只输出代码。", hyde_prompt, max_tokens=200)
+        return chat("你是一名擅长预测 bug 位置的工程师，只输出代码。", hyde_prompt, max_tokens=200)
     except Exception:
-        hyde_doc = None
+        return None
 
-    queries = [q for q in [hyde_doc, title_query, type_query, stack_query] if q]
 
-    per_query_results: list[list[str]] = []
-    per_query_metadatas: list[list[dict]] = []
-    for q in queries:
-        try:
-            res = rag_collection.query(query_texts=[q], n_results=5,
-                                       include=["documents", "metadatas"])
-            docs = res["documents"][0] if res["documents"] else []
-            metas = res["metadatas"][0] if res["metadatas"] else []
-            per_query_results.append(docs)
-            per_query_metadatas.append(metas)
-        except Exception as e:
-            print(f"[RAG] 查询失败，跳过: {e}")
+_FILETYPE_WEIGHTS = {
+    "bug":      {"source": 1.0, "test": 0.7, "doc": 0.4},
+    "question": {"source": 0.7, "test": 0.5, "doc": 1.2},
+    "feature":  {"source": 1.0, "test": 0.8, "doc": 0.6},
+    "security": {"source": 1.0, "test": 0.7, "doc": 0.4},
+}
 
-    # grep 已找到入口时，RAG 只取 2 个补充；grep 没找到时 RAG 取 3 个作主力
-    rag_top_n = 2 if grep_context else 3
 
-    final_docs: list[str] = []
-    if per_query_results:
-        merged = _rrf_merge(per_query_results)[:10]
-        doc_metas: dict[str, str] = {}
-        for docs, metas in zip(per_query_results, per_query_metadatas):
-            for doc, meta in zip(docs, metas):
-                if doc not in doc_metas:
-                    doc_metas[doc] = meta.get("file_type", "source")
-        merged = _apply_filetype_weights(merged, doc_metas, state.get("issue_type", "bug"))
-        reranker = _get_reranker()
-        if reranker and len(merged) > 1:
-            try:
-                pairs = [(state["title"], doc) for doc in merged]
-                scores = reranker.predict(pairs)
-                ranked = sorted(zip(scores, merged), key=lambda x: x[0], reverse=True)
-                final_docs = [doc for _, doc in ranked[:rag_top_n]]
-            except Exception:
-                final_docs = merged[:rag_top_n]
-        else:
-            final_docs = merged[:rag_top_n]
+def _apply_filetype_weights(docs: list[str], doc_metas: dict[str, str], issue_type: str) -> list[str]:
+    weights = _FILETYPE_WEIGHTS.get(issue_type, _FILETYPE_WEIGHTS["bug"])
+    scored = []
+    for rank, doc in enumerate(docs, start=1):
+        file_type = doc_metas.get(doc, "source")
+        w = weights.get(file_type, 1.0)
+        score = (1.0 / rank) * w
+        scored.append((score, doc))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [doc for _, doc in scored]
 
-    rag_context = "\n\n---\n\n".join(final_docs)
 
-    # 构建 doc → file_path 映射，供 dep_indexer 读取 import
-    doc_paths: dict[str, str] = {}
-    for docs, metas in zip(per_query_results, per_query_metadatas):
-        for doc, meta in zip(docs, metas):
-            if doc not in doc_paths and meta.get("path"):
-                doc_paths[doc] = meta["path"]
-
+def _expand_call_graph(rag_context: str, owner: str, repo: str) -> str:
     from config import settings
     repo_path = str(settings.clone_base / f"{owner}__{repo}")
-    dep_docs = retrieve_from_imported_deps(final_docs, doc_paths, repo_path, owner, repo, queries)
-    dep_context = "\n\n---\n\n".join(dep_docs[:3]) if dep_docs else ""
-    if dep_context:
-        print(f"[DepIndexer] 补充依赖代码（前 100 字）: {dep_context[:100]}...")
-
-    call_graph_context = ""
-    if state.get("issue_type") == "bug":
-        call_graph_context = _expand_call_graph(rag_context, owner, repo)
-
-    # grep 结果放最前，作为调用链起点；RAG 和其他上下文作为补充
-    sections = []
-    if grep_context:
-        sections.append("--- [入口代码（grep 定位）] ---\n\n" + grep_context)
-    if rag_context:
-        sections.append(rag_context)
-    if dep_context:
-        sections.append("--- [依赖源码] ---\n\n" + dep_context)
-    if call_graph_context:
-        print(f"[CallGraph] 展开被调函数:\n{call_graph_context[:200]}...")
-        sections.append("--- [Call Graph 展开] ---\n\n" + call_graph_context)
-    if state.get("is_regression"):
-        git_context = _fetch_git_history(owner, repo, state, rag_context)
-        if git_context:
-            print(f"[GitHistory] 找到相关 commit diff（前 200 字）:\n{git_context[:200]}...")
-            sections.append("--- [Git History] ---\n\n" + git_context)
-
-    return {"code_context": "\n\n".join(sections)}
+    if not __import__("pathlib").Path(repo_path).exists():
+        return ""
+    try:
+        func_names = extract_func_names(rag_context)
+        if not func_names:
+            return ""
+        return expand_with_callees(func_names, repo_path)
+    except Exception as e:
+        print(f"[CallGraph] 展开失败，跳过: {e}")
+        return ""
 
 
-def _fetch_git_history(owner: str, repo: str, state: IssueState, rag_context: str) -> str:
-    """
-    回归 bug 的 git history 策略：
-    1. Issue 有版本号 → fetch_recent_diff（基于版本号锚点找 commit）
-    2. 没有版本号 → fetch_blame_diff（基于 RAG 召回的文件行号 blame）
-    """
+def _fetch_git_history(owner: str, repo: str, state: dict, rag_context: str) -> str:
     from config import settings
     from pathlib import Path
     import re
@@ -219,44 +149,178 @@ def _fetch_git_history(owner: str, repo: str, state: IssueState, rag_context: st
         return ""
 
 
-_FILETYPE_WEIGHTS = {
-    #             source  test   doc
-    "bug":      {"source": 1.0, "test": 0.7, "doc": 0.4},
-    "question": {"source": 0.7, "test": 0.5, "doc": 1.2},
-    "feature":  {"source": 1.0, "test": 0.8, "doc": 0.6},
-    "security": {"source": 1.0, "test": 0.7, "doc": 0.4},
-}
+# ── Sub-state for Send API parallel gather ──────────────────────────────────
+
+class GatherContextState(TypedDict):
+    issue_url: str
+    title: str
+    body: str
+    issue_type: str
+    is_regression: bool
+    stack_trace_context: str
+    context_type: str  # "entry" | "rag" | "git"
 
 
-def _apply_filetype_weights(
-    docs: list[str],
-    doc_metas: dict[str, str],
-    issue_type: str,
-) -> list[str]:
-    """按文件类型权重对 RRF 排序结果重排，保留顺序关系只做相对调整。"""
-    weights = _FILETYPE_WEIGHTS.get(issue_type, _FILETYPE_WEIGHTS["bug"])
-    scored = []
-    for rank, doc in enumerate(docs, start=1):
-        file_type = doc_metas.get(doc, "source")
-        w = weights.get(file_type, 1.0)
-        # RRF 原始分 × 类型权重，rank 越小分越高
-        score = (1.0 / rank) * w
-        scored.append((score, doc))
-    scored.sort(key=lambda x: x[0], reverse=True)
-    return [doc for _, doc in scored]
+# ── 三个独立收集函数 ─────────────────────────────────────────────────────────
+
+def _gather_entry_context(state: dict) -> dict:
+    """LLM 识别入口函数 + grep 定位调用链起点（~1.5s LLM + fast grep）"""
+    owner, repo, _ = parse_issue_url(state["issue_url"])
+    entry_points = _llm_identify_entry_points(state["title"], state.get("body", ""))
+    if not entry_points:
+        print("[Gather/Entry] LLM 未识别到入口函数")
+        return {"_entry_ctx": ""}
+    ctx = _grep_entry_points(owner, repo, entry_points)
+    if ctx:
+        print(f"[Gather/Entry] 入口 {entry_points} grep 成功")
+    else:
+        print(f"[Gather/Entry] 入口 {entry_points} 仓库中未找到定义")
+    return {"_entry_ctx": ctx}
 
 
-def _expand_call_graph(rag_context: str, owner: str, repo: str) -> str:
-    """从 RAG 召回的代码里提取函数名，展开其被调函数。"""
+def _gather_rag_context(state: dict) -> dict:
+    """HyDE + RAG 四路查询 + rerank + dep_indexer + call_graph（~2-7s）"""
+    owner, repo, _ = parse_issue_url(state["issue_url"])
+    rag_collection = get_repo_collection(owner, repo)
+
+    hyde_doc = _generate_hyde(state)
+    title_query = state["title"]
+    type_query = f"{state.get('issue_type', '')} {state.get('body', '')[:150]}"
+    stack_ctx = state.get("stack_trace_context", "")
+    stack_query = stack_ctx[:300] if stack_ctx else None
+
+    queries = [q for q in [hyde_doc, title_query, type_query, stack_query] if q]
+
+    per_query_results: list[list[str]] = []
+    per_query_metadatas: list[list[dict]] = []
+    for q in queries:
+        try:
+            res = rag_collection.query(query_texts=[q], n_results=5,
+                                       include=["documents", "metadatas"])
+            docs = res["documents"][0] if res["documents"] else []
+            metas = res["metadatas"][0] if res["metadatas"] else []
+            per_query_results.append(docs)
+            per_query_metadatas.append(metas)
+        except Exception as e:
+            print(f"[RAG] 查询失败，跳过: {e}")
+
+    final_docs: list[str] = []
+    if per_query_results:
+        merged = _rrf_merge(per_query_results)[:10]
+        doc_metas: dict[str, str] = {}
+        for docs, metas in zip(per_query_results, per_query_metadatas):
+            for doc, meta in zip(docs, metas):
+                if doc not in doc_metas:
+                    doc_metas[doc] = meta.get("file_type", "source")
+        merged = _apply_filetype_weights(merged, doc_metas, state.get("issue_type", "bug"))
+        reranker = _get_reranker()
+        if reranker and len(merged) > 1:
+            try:
+                pairs = [(state["title"], doc) for doc in merged]
+                scores = reranker.predict(pairs)
+                ranked = sorted(zip(scores, merged), key=lambda x: x[0], reverse=True)
+                final_docs = [doc for _, doc in ranked[:3]]
+            except Exception:
+                final_docs = merged[:3]
+        else:
+            final_docs = merged[:3]
+
+    rag_context = "\n\n---\n\n".join(final_docs)
+
+    doc_paths: dict[str, str] = {}
+    for docs, metas in zip(per_query_results, per_query_metadatas):
+        for doc, meta in zip(docs, metas):
+            if doc not in doc_paths and meta.get("path"):
+                doc_paths[doc] = meta["path"]
+
     from config import settings
     repo_path = str(settings.clone_base / f"{owner}__{repo}")
-    if not __import__("pathlib").Path(repo_path).exists():
-        return ""
-    try:
-        func_names = extract_func_names(rag_context)
-        if not func_names:
-            return ""
-        return expand_with_callees(func_names, repo_path)
-    except Exception as e:
-        print(f"[CallGraph] 展开失败，跳过: {e}")
-        return ""
+    dep_docs = retrieve_from_imported_deps(final_docs, doc_paths, repo_path, owner, repo, queries)
+    dep_context = "\n\n---\n\n".join(dep_docs[:3]) if dep_docs else ""
+    if dep_context:
+        print(f"[Gather/RAG] DepIndexer 补充依赖（前 100 字）: {dep_context[:100]}...")
+
+    call_graph_context = ""
+    if state.get("issue_type") == "bug":
+        call_graph_context = _expand_call_graph(rag_context, owner, repo)
+        if call_graph_context:
+            print(f"[Gather/RAG] CallGraph 展开:\n{call_graph_context[:200]}...")
+
+    sections = []
+    if rag_context:
+        sections.append(rag_context)
+    if dep_context:
+        sections.append("--- [依赖源码] ---\n\n" + dep_context)
+    if call_graph_context:
+        sections.append("--- [Call Graph 展开] ---\n\n" + call_graph_context)
+
+    return {"_rag_ctx": "\n\n".join(sections)}
+
+
+def _gather_git_context(state: dict) -> dict:
+    """Git history（仅 regression，使用 issue body 作锚点并行化）"""
+    if not state.get("is_regression"):
+        return {"_git_ctx": ""}
+    owner, repo, _ = parse_issue_url(state["issue_url"])
+    # 并行模式下无法使用 RAG 结果，改用 issue body 作为 blame 锚点
+    issue_text = f"{state['title']}\n{state.get('body', '')[:500]}"
+    git_ctx = _fetch_git_history(owner, repo, state, rag_context=issue_text)
+    if git_ctx:
+        print(f"[Gather/Git] 找到相关 commit diff（前 200 字）:\n{git_ctx[:200]}...")
+    return {"_git_ctx": git_ctx}
+
+
+# ── Send API dispatch ────────────────────────────────────────────────────────
+
+def dispatch_context_gather(state: IssueState) -> list[Send]:
+    """返回三个 Send，并行启动 entry / rag / git 收集。"""
+    base = {
+        "issue_url":           state["issue_url"],
+        "title":               state["title"],
+        "body":                state.get("body", ""),
+        "issue_type":          state.get("issue_type", "bug"),
+        "is_regression":       state.get("is_regression", False),
+        "stack_trace_context": state.get("stack_trace_context", ""),
+    }
+    return [
+        Send("gather_context_part", {**base, "context_type": "entry"}),
+        Send("gather_context_part", {**base, "context_type": "rag"}),
+        Send("gather_context_part", {**base, "context_type": "git"}),
+    ]
+
+
+def gather_context_part(state: GatherContextState) -> dict:
+    """单节点，按 context_type 路由到三个收集函数。"""
+    t = state["context_type"]
+    if t == "entry":
+        return _gather_entry_context(state)
+    elif t == "rag":
+        return _gather_rag_context(state)
+    else:
+        return _gather_git_context(state)
+
+
+# ── 准备和合并节点 ──────────────────────────────────────────────────────────
+
+def prepare_context(state: IssueState) -> dict:
+    """在并行收集前确保仓库已克隆并索引（阻塞操作，必须串行）。"""
+    owner, repo, _ = parse_issue_url(state["issue_url"])
+    ensure_repo_indexed(owner, repo)
+    return {}
+
+
+def merge_context(state: IssueState) -> dict:
+    """三路并行结果全部完成后，组装 code_context。"""
+    entry_ctx = state.get("_entry_ctx", "")
+    rag_ctx   = state.get("_rag_ctx", "")
+    git_ctx   = state.get("_git_ctx", "")
+
+    sections = []
+    if entry_ctx:
+        sections.append("--- [入口代码（grep 定位）] ---\n\n" + entry_ctx)
+    if rag_ctx:
+        sections.append(rag_ctx)
+    if git_ctx:
+        sections.append("--- [Git History] ---\n\n" + git_ctx)
+
+    return {"code_context": "\n\n".join(sections)}

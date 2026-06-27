@@ -413,6 +413,143 @@ class TestGrepEntryPoints:
         assert result
 
 
+class TestDispatchContextGather:
+    def _base_state(self, **kw):
+        return {
+            "issue_url": "https://github.com/psf/requests/issues/42",
+            "title": "timeout not working",
+            "body": "When I set timeout=5 it hangs forever",
+            "issue_type": "bug",
+            "is_regression": False,
+            "stack_trace_context": "",
+            **kw,
+        }
+
+    def test_returns_three_sends(self):
+        from langgraph.types import Send
+        from workflow.nodes.retrieve import dispatch_context_gather
+        sends = dispatch_context_gather(self._base_state())
+        assert len(sends) == 3
+        assert all(isinstance(s, Send) for s in sends)
+
+    def test_all_sends_target_gather_context_part(self):
+        from workflow.nodes.retrieve import dispatch_context_gather
+        sends = dispatch_context_gather(self._base_state())
+        assert all(s.node == "gather_context_part" for s in sends)
+
+    def test_all_context_types_covered(self):
+        from workflow.nodes.retrieve import dispatch_context_gather
+        sends = dispatch_context_gather(self._base_state())
+        types = {s.arg["context_type"] for s in sends}
+        assert types == {"entry", "rag", "git"}
+
+    def test_issue_url_propagated(self):
+        from workflow.nodes.retrieve import dispatch_context_gather
+        sends = dispatch_context_gather(self._base_state())
+        assert all("psf/requests" in s.arg["issue_url"] for s in sends)
+
+    def test_is_regression_propagated(self):
+        from workflow.nodes.retrieve import dispatch_context_gather
+        sends = dispatch_context_gather(self._base_state(is_regression=True))
+        assert all(s.arg["is_regression"] is True for s in sends)
+
+
+class TestGatherContextPart:
+    def _base(self, context_type, **kw):
+        return {
+            "issue_url": "https://github.com/psf/requests/issues/42",
+            "title": "timeout bug",
+            "body": "hangs",
+            "issue_type": "bug",
+            "is_regression": False,
+            "stack_trace_context": "",
+            "context_type": context_type,
+            **kw,
+        }
+
+    def test_entry_type_returns_entry_ctx_key(self):
+        from workflow.nodes.retrieve import gather_context_part
+        with patch("workflow.nodes.retrieve._llm_identify_entry_points", return_value=[]):
+            result = gather_context_part(self._base("entry"))
+        assert "_entry_ctx" in result
+
+    def test_rag_type_returns_rag_ctx_key(self):
+        from workflow.nodes.retrieve import gather_context_part
+        with patch("workflow.nodes.retrieve._generate_hyde", return_value=None), \
+             patch("workflow.nodes.retrieve.get_repo_collection") as mock_col:
+            mock_col.return_value.query.return_value = {"documents": [[]], "metadatas": [[]]}
+            with patch("workflow.nodes.retrieve.retrieve_from_imported_deps", return_value=[]):
+                result = gather_context_part(self._base("rag"))
+        assert "_rag_ctx" in result
+
+    def test_git_type_skips_when_not_regression(self):
+        from workflow.nodes.retrieve import gather_context_part
+        result = gather_context_part(self._base("git", is_regression=False))
+        assert result == {"_git_ctx": ""}
+
+    def test_git_type_returns_git_ctx_key(self):
+        from workflow.nodes.retrieve import gather_context_part
+        with patch("workflow.nodes.retrieve._fetch_git_history", return_value="commit diff here"):
+            result = gather_context_part(self._base("git", is_regression=True))
+        assert "_git_ctx" in result
+        assert result["_git_ctx"] == "commit diff here"
+
+
+class TestMergeContext:
+    def test_assembles_all_three_parts(self):
+        from workflow.nodes.retrieve import merge_context
+        state = {**_state(), "_entry_ctx": "ENTRY", "_rag_ctx": "RAG", "_git_ctx": "GIT"}
+        result = merge_context(state)
+        assert "ENTRY" in result["code_context"]
+        assert "RAG" in result["code_context"]
+        assert "GIT" in result["code_context"]
+
+    def test_entry_placed_before_rag(self):
+        from workflow.nodes.retrieve import merge_context
+        state = {**_state(), "_entry_ctx": "ENTRY", "_rag_ctx": "RAG", "_git_ctx": ""}
+        ctx = merge_context(state)["code_context"]
+        assert ctx.index("ENTRY") < ctx.index("RAG")
+
+    def test_empty_parts_excluded(self):
+        from workflow.nodes.retrieve import merge_context
+        state = {**_state(), "_entry_ctx": "", "_rag_ctx": "ONLY_RAG", "_git_ctx": ""}
+        ctx = merge_context(state)["code_context"]
+        assert ctx == "ONLY_RAG"
+
+    def test_all_empty_returns_empty_string(self):
+        from workflow.nodes.retrieve import merge_context
+        state = {**_state(), "_entry_ctx": "", "_rag_ctx": "", "_git_ctx": ""}
+        assert merge_context(state)["code_context"] == ""
+
+    def test_returns_code_context_key(self):
+        from workflow.nodes.retrieve import merge_context
+        state = {**_state(), "_entry_ctx": "x", "_rag_ctx": "", "_git_ctx": ""}
+        assert "code_context" in merge_context(state)
+
+    def test_missing_keys_handled_gracefully(self):
+        from workflow.nodes.retrieve import merge_context
+        result = merge_context(_state())  # no _entry_ctx etc.
+        assert "code_context" in result
+
+
+class TestIssueGraphStructure:
+    def test_parallel_nodes_present(self):
+        from workflow.graph import app
+        nodes = list(app.get_graph().nodes.keys())
+        for node in ["prepare_context", "gather_context_part", "merge_context"]:
+            assert node in nodes, f"缺少节点: {node}"
+
+    def test_sequential_retrieve_removed(self):
+        from workflow.graph import app
+        nodes = list(app.get_graph().nodes.keys())
+        assert "retrieve_context" not in nodes
+
+    def test_state_has_parallel_fields(self):
+        from workflow.state import IssueState
+        for field in ["_entry_ctx", "_rag_ctx", "_git_ctx"]:
+            assert field in IssueState.__annotations__, f"IssueState 缺少字段: {field}"
+
+
 class TestReflect:
     def test_confidence_clamped_to_0_1(self):
         from workflow.nodes.reflect import reflect

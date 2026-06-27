@@ -1,10 +1,22 @@
 # RepoMind
 
-输入一个 GitHub Issue URL，自动完成根因分析、代码定位、修复建议，输出结构化报告。
+两个功能，共用同一套底层基础设施（RAG、Memory、LangGraph、工具层）：
 
 ```bash
+# Issue 根因分析
 python main.py https://github.com/fastapi/fastapi/issues/10236
+
+# PR Code Review
+python main.py https://github.com/psf/requests/pull/6789
 ```
+
+`main.py` 自动识别 URL 格式路由到对应工作流。
+
+---
+
+## 功能一：Issue 智能分析
+
+输入 GitHub Issue URL，自动完成根因分析、代码定位、修复建议，输出结构化报告。
 
 ```
 根因：APIRouter 的 generate_unique_id_function 参数未被传递到子路由器
@@ -14,45 +26,89 @@ python main.py https://github.com/fastapi/fastapi/issues/10236
 置信度：0.90
 ```
 
----
-
-## 架构
-
-基于 **LangGraph StateGraph** 的多节点分析流水线，支持 Bug / Feature / Question / Security 四条路径。
+### Issue 分析流程
 
 ```
 fetch_issue → build_project_map → describe_images → parse_stack_trace → route_issue
-  ├─ bug      → detect_regression → memory_retrieve → retrieve_context
-  │             → classify_fix → analyze_bug (ReAct × 12 rounds, 9 tools)
-  ├─ feature  → memory_retrieve → retrieve_context
-  │             → detect_existing → analyze_feature (ReAct × 12 rounds)
-  ├─ question → memory_retrieve → retrieve_context
-  │             → answer_question (ReAct × 12 rounds)
-  └─ security → human_gate (interrupt) → memory_retrieve → retrieve_context → analyze_bug
+  ├─ bug      → detect_regression → memory_retrieve → prepare_context
+  ├─ feature  → memory_retrieve → prepare_context            │
+  ├─ question → memory_retrieve → prepare_context     ▼ Send × 3（并行）
+  └─ security → human_gate → memory_retrieve        gather_context_part
+                                               entry/rag/git 三路同时跑
+                                                     ▼ merge_context
+  ├─ bug      → classify_fix → analyze_bug (ReAct × 12 rounds, 9 tools)
+  ├─ feature  → detect_existing → analyze_feature (ReAct × 12 rounds)
+  ├─ question → answer_question (ReAct × 12 rounds)
+  └─ security → classify_fix → analyze_bug
   → reflect (retry if confidence < 0.7, max 2x) → generate_report → memory_save
 ```
 
-### 核心节点
+---
 
-| 节点 | 职责 |
-|---|---|
-| `build_project_map` | 读仓库 2 层目录树 → LLM 生成项目摘要，注入所有分析节点，减少 ReAct 摸结构的浪费 |
-| `route_issue` | 内容信号优先分类（有 traceback → bug；用词含 "how to" → question），label 只作参考 |
-| `detect_regression` | 判断是否为回归 bug，标记 `is_regression` 供 git 工具使用 |
-| `classify_fix` | 将 bug 细分为 `code_fix / dependency_upgrade / config_fix`，注入差异化提示 |
-| `detect_existing` | feature 专用；让 LLM 推理"功能存在的证据是什么"，精确 grep 验证，避免误判 |
-| `analyze_*` | ReAct 工具循环，主动追踪代码，最多 12 轮 |
-| `reflect` | 独立批评者 LLM 打置信度分，< 0.7 触发重试 |
-| `human_gate` | Security 类强制 `interrupt()`，人工确认后 `Command(resume)` 恢复 |
-| `memory_retrieve/save` | ChromaDB `issue_memory` collection，历史同类 Issue 根因检索与沉淀 |
+## 功能二：PR Code Review
+
+输入 GitHub PR URL，三路并行分析安全 / 风格 / 逻辑问题，输出 APPROVE / REQUEST CHANGES 报告。
+
+```
+✅ APPROVE — PR #6789: Fix timeout handling
+置信度：0.88
+
+🔵 [LOW] style — requests/adapters.py L142
+  变量名 `t` 含义不明确，建议改为 `timeout_value`
+
+🟡 [MEDIUM] logic — requests/sessions.py L380
+  timeout 参数未传递到底层 urllib3 调用
+```
+
+### PR Review 流程
+
+```
+fetch_pr → build_project_map → describe_pr_images → memory_retrieve_pr
+    → prepare_reviews
+    │
+    ▼ dispatch_reviews（Send × 3）
+    ├─ run_review(security)  → ReAct × 10 轮  → security_issues
+    ├─ run_review(style)     → ReAct × 6 轮   → style_issues
+    └─ run_review(logic)     → ReAct × 10 轮  → logic_issues
+    → reflect_pr (retry if confidence < 0.7, 回 prepare_reviews)
+    → generate_pr_report (APPROVE / REQUEST CHANGES) → memory_save_pr
+```
+
+**Verdict 逻辑**：存在 critical / high 问题 → ❌ REQUEST CHANGES；全部 low / medium → ✅ APPROVE
 
 ---
 
 ## 技术要点
 
-### 1. ReAct 工具循环（Coding Agent）
+### 1. Send API 双路并行
 
-9 个工具构成主动代码追踪能力，LLM 自主决定下一步操作：
+**Issue 上下文收集**（三路）：
+
+```python
+def dispatch_context_gather(state: IssueState) -> list[Send]:
+    return [
+        Send("gather_context_part", {**base, "context_type": "entry"}),  # LLM 入口识别 + grep
+        Send("gather_context_part", {**base, "context_type": "rag"}),    # HyDE + 4路RAG + dep + callgraph
+        Send("gather_context_part", {**base, "context_type": "git"}),    # git history（仅 regression）
+    ]
+```
+
+**PR 三路 Review**（三路）：
+
+```python
+def dispatch_reviews(state: PRState) -> list[Send]:
+    return [
+        Send("run_review", {**base, "review_type": "security"}),
+        Send("run_review", {**base, "review_type": "style"}),
+        Send("run_review", {**base, "review_type": "logic"}),
+    ]
+```
+
+两处都采用单节点名 + 路由字段模式：`gather_context_part` / `run_review` 按类型路由，各路写入不同 State 字段，LangGraph 自动合并，后续节点等全部完成后触发一次。
+
+### 2. ReAct 工具循环（Coding Agent）
+
+9 个工具，LLM 自主决定下一步操作，最多 12 轮：
 
 ```
 代码导航：
@@ -65,33 +121,32 @@ fetch_issue → build_project_map → describe_images → parse_stack_trace → 
 Git 时间轴（回归 bug 专用）：
   git_log_file     → 文件提交历史
   git_blame        → 行级 commit 归属
-  search_commits   → 搜 commit message 找历史修复
+  search_commits   → 搜 commit message
 
 跨仓库依赖：
   fetch_dependency → RAG 查依赖库源码（含 Rust/C 扩展）
 ```
 
-### 2. MCP 工具规范
+### 3. MCP 工具规范
 
 所有工具遵循 **MCP 协议规范**，通过 JSON Schema 定义参数和返回值，统一注册到 `ToolRegistry`：
 
 ```python
-# tools/base.py — Tool 定义
-Tool(name="read_file", description="...", parameters={
+# tools/base.py
+Tool(name="read_file", parameters={
     "type": "object",
     "properties": {"owner": ..., "repo": ..., "path": ..., "start_line": ..., "end_line": ...},
     "required": ["owner", "repo", "path"],
 })
 
-# build_tools() — 将工具列表转换为 OpenAI function calling 格式
 tools_schema, executors = build_tools(READ_FILE, GREP_CODE, LIST_DIR, ...)
 ```
 
-等价于 MCP 的 `get_file_contents / search_code / list_directory / get_issue`，GitHub REST API 作为 transport。
+等价于 MCP 的 `get_file_contents / search_code / list_directory`，GitHub REST API 作为 transport。
 
-### 3. Plan-Execute 模式
+### 4. Plan-Execute 模式
 
-bug 路径在 ReAct 执行前先完成两步**规划**：
+bug 路径在 ReAct 执行前先完成两步规划：
 
 ```
 detect_regression  →  classify_fix  →  analyze_bug (执行)
@@ -100,21 +155,20 @@ detect_regression  →  classify_fix  →  analyze_bug (执行)
                      config_fix）
 ```
 
-`classify_fix` 根据判断结果注入差异化提示——`dependency_upgrade` 时告知 LLM 把 `affected_files` 写成 `pyproject.toml`，`config_fix` 时关注配置文件路径。规划与执行分离，避免 ReAct 阶段在"这是什么类型的问题"上浪费轮次。
+`classify_fix` 根据判断结果注入差异化提示——`dependency_upgrade` 时告知 LLM 关注 `pyproject.toml`，`config_fix` 时关注配置文件路径。规划与执行分离，避免 ReAct 阶段浪费轮次在"这是什么类型"上。
 
-### 4. Reflection / Critic-Actor
+### 5. Reflection / Critic-Actor
 
-`reflect` 是独立的批评者 LLM 实例，不共享 analyze 节点的上下文，驱动 Agent 回头再探：
+`reflect` 是独立批评者 LLM，不共享 analyze 节点上下文：
 
 ```python
-# reflect 节点 system prompt
 "你是严格的代码评审专家，质疑分析结论：证据够吗？还有其他可能原因吗？
  给出 0-1 置信度分，低于 0.7 时说明哪里不足，促使重新分析。"
 ```
 
-置信度 < 0.7 → 回到对应 analyze 节点重试，最多 2 次，`iteration` 字段防死循环。
+置信度 < 0.7 → 回到对应节点重试，最多 2 次，`iteration` 防死循环。PR Review 中，retry 回到 `prepare_reviews` 跳过 memory 重查，直接重新并行 review。
 
-### 5. RAG 检索管线
+### 6. RAG 检索管线
 
 **4 路多查询 + RRF 融合 + CrossEncoder Rerank**：
 
@@ -125,77 +179,80 @@ type + body   │
 stack trace帧  ┘
 ```
 
-- **HyDE**：先让 LLM 生成"假设的相关代码片段"，用代码检索代码，解决自然语言与代码的语义空间不匹配
-- **RRF**（Reciprocal Rank Fusion）：`score = Σ 1/(k + rank_i)`，兼顾"出现次数"和"每次排名"
+- **HyDE**：先让 LLM 生成"假设的相关代码片段"，用代码检索代码，解决语义空间不匹配
+- **RRF**：`score = Σ 1/(k + rank_i)`，兼顾"出现次数"和"每次排名"
 - **文件类型权重**：bug 模式 source ×1.0 / doc ×0.4；question 模式 doc ×1.2 / source ×0.7
 - **代码切片**：Python 文件按 AST 函数/类切，保留行号；Markdown 按 `##` 标题切
 
-### 6. Grep 优先 + LLM 入口识别（ContextBuilder）
+### 7. ContextBuilder：Grep 优先 + LLM 入口识别
 
-核心观察：RAG 靠语义相似度，不懂调用链。`retrieve_context` 节点三步组装上下文：
+核心观察：RAG 靠语义相似度，不懂调用链。上下文组装三步：
 
 1. **LLM 识别入口**：读 Issue 标题和 body，输出用户触发问题时调用的函数名（JSON 数组，能区分函数名/包名/英文词）
 2. **grep 精确定位**：搜索入口函数定义，读取上下文代码，**入口代码放首位**
-3. **RAG 补充**：取 top-2 补充语义相关片段；无入口时降级 RAG top-3
+3. **RAG 补充**：入口有结果时 top-2 补充；无入口时降级 RAG top-3
 
-`_context_sections()` 负责最终组装，按 `项目地图 → 代码片段 → 历史记忆 → stack trace → 关联 PR` 顺序排列，控制注入 prompt 的 context 预算。
+现在这三步在 `gather_context_part` 三路并行中分别执行，耗时从串行求和变为取最大值。
 
-### 7. Import 驱动依赖索引
+### 8. Import 驱动依赖索引
 
 RAG 索引时存储每个文件的 `imports` metadata。分析时读取 imports，与 `pyproject.toml` 依赖取交集，自动 clone + 索引依赖库，再对依赖库做 RAG——跨语言（Python → Rust pydantic-core）也能追踪。
 
-### 8. 多模态（Vision 模型提取截图信息）
-
-Issue 里的错误截图比 PR diff 更常见，是 GitHub Issue 分析的刚需：
+### 9. 多模态（Vision 模型提取截图信息）
 
 ```python
-# describe_images 节点：提取图片 → base64 → 调 DeepSeek-VL2
+# describe_images / describe_pr_images 节点
 data_url = f"data:{mime};base64,{b64}"
-result = vision_client.chat.completions.create(
-    model="deepseek-vl2",
-    messages=[{"role": "user", "content": [
+vision_client.chat.completions.create(model="deepseek-vl2", messages=[
+    {"role": "user", "content": [
         {"type": "image_url", "image_url": {"url": data_url}},
-        {"type": "text", "text": "描述图片内容，重点关注错误信息、UI 异常、堆栈信息..."},
-    ]}],
-)
+        {"type": "text", "text": "描述图片内容，重点关注错误信息、UI 异常..."},
+    ]}
+])
 ```
 
-图片描述结果注入三个 analyze 节点的 prompt，UI Bug 截图和错误截图中的堆栈信息不再丢失。
+Issue 和 PR 都复用同一套视觉描述逻辑，图片描述注入对应 analyze 节点的 prompt。
 
-### 9. 共享状态/黑板（IssueState）
+### 10. 共享状态/黑板
 
-所有节点读写同一个 `IssueState` TypedDict，LangGraph 确保节点间状态传递是原子的：
+两套 TypedDict 分别作为 Issue 和 PR 的黑板：
 
 ```python
-class IssueState(TypedDict):
-    issue_url: str          # 输入
+class IssueState(TypedDict):    # Issue 分析共享状态（~28 字段）
+    issue_url: str
     issue_type: Literal["bug", "feature", "question", "security"]
-    project_map: str        # build_project_map 填入
-    is_regression: bool     # detect_regression 填入
-    fix_type: str           # classify_fix 填入
-    root_cause: str         # analyze_* 填入
-    confidence: float       # reflect 填入
-    final_report: str       # generate_report 填入
-    # ... 共 25 个字段
+    _entry_ctx: str             # gather_context_part 并行写入
+    _rag_ctx: str
+    _git_ctx: str
+    code_context: str           # merge_context 组装后的最终上下文
+    confidence: float
+    final_report: str
+    # ...
+
+class PRState(TypedDict):       # PR Review 共享状态（~20 字段）
+    pr_url: str
+    changed_files: list[dict]
+    security_issues: list[dict] # run_review(security) 写入
+    style_issues: list[dict]    # run_review(style) 写入
+    logic_issues: list[dict]    # run_review(logic) 写入
+    final_report: str
+    # ...
 ```
 
-每个节点只负责更新自己的字段，返回 `dict` 局部更新，不覆盖其他节点的结果。
+每个节点只返回自己更新的字段，LangGraph 原子合并，并行节点写不同 key 无冲突。
 
-### 10. Checkpointing / 断点续跑
+### 11. Checkpointing / 断点续跑
 
 ```python
-# SqliteSaver：checkpoint 持久化到本地 SQLite
+# Issue graph → checkpoints.sqlite
+# PR graph   → pr_checkpoints.sqlite（独立文件，互不干扰）
 conn = sqlite3.connect("repo_knowledge_base/checkpoints.sqlite")
 app = graph.compile(checkpointer=SqliteSaver(conn))
-
-# 每次调用必须携带 thread_id
-config = {"configurable": {"thread_id": str(uuid.uuid4())}}
-result = app.invoke({...}, config=config)
 ```
 
-进程重启后 HITL 暂停状态不丢失；eval runner 也利用 checkpoint 实现断点续跑（跳过已评估的 issue）。
+进程重启后 HITL 暂停状态不丢失；eval runner 利用 checkpoint 断点续跑（跳过已评估的 issue）。
 
-### 11. HITL（Human-in-the-Loop）
+### 12. HITL（Human-in-the-Loop）
 
 ```python
 # human_gate 节点
@@ -205,9 +262,9 @@ decision = interrupt({"message": "⚠️ Security Issue 需要人工确认", ...
 result = app.invoke(Command(resume=decision), config=config)
 ```
 
-`interrupt()` 是断点不是结束，`Command(resume)` 从 checkpointer 恢复，`human_gate` 函数从 `interrupt()` 那行继续，不重跑整个 graph。
+`interrupt()` 是断点不是结束，`Command(resume)` 从 checkpointer 恢复，`human_gate` 从 `interrupt()` 那行继续，不重跑整个 graph。
 
-### 12. 层级编排（3 层）
+### 13. 层级编排（3 层）
 
 ```
 main.py（用户入口）
@@ -219,35 +276,34 @@ main.py（用户入口）
 - **RepoAgent**：独立 FastAPI 服务，Job Queue 非阻塞，`GET /jobs/{id}` 轮询结果
 - **reducer 聚合**：`Annotated[list[dict], operator.add]`，并行子节点结果自动追加不覆盖
 
-### 13. A2A + ANP 协议
+### 14. A2A + ANP 协议
 
 ```python
 # A2A：Agent 间通过 HTTP 通信
 httpx.post(f"{repo_agent_url}/analyze", json={"issue_url": ...})
 
 # ANP：地址自知，无需服务发现
-# OrchestratorAgent 直接持有 RepoAgent 的 URL，无中间注册表
 REPO_AGENT_URLS = {
     "fastapi/fastapi": "http://localhost:8001",
     "encode/starlette": "http://localhost:8002",
 }
 ```
 
-3 个 A2AServer（TriageAgent / CodeSearchAgent / FixSuggestionAgent）是真实 HTTP 服务，可独立部署和横向扩展。
+OrchestratorAgent 直接持有各 RepoAgent 的 URL，无中间注册表，可独立部署和横向扩展。
 
-### 14. 角色专业化
-
-每个分析节点有独立的 system prompt 定义角色，防止角色混淆：
+### 15. 角色专业化
 
 | 节点 | 角色 |
 |---|---|
 | `analyze_bug` | 资深后端工程师，10 年源码阅读经验，擅长调用链追踪 |
 | `analyze_feature` | 资深软件架构师，评估可行性、侵入性、breaking change 风险 |
-| `answer_question` | 技术文档工程师，区分"使用问题"vs"设计决策"，不建议修改库代码 |
-| `reflect` | 严格的代码评审专家，独立评估，质疑证据充分性 |
-| `route_issue` | GitHub Issue 分类专家，内容信号优先于 label |
+| `answer_question` | 技术文档工程师，区分"使用问题"vs"设计决策" |
+| `analyze_security` | 安全工程师，OWASP Top 10 视角，ReAct × 10 轮 |
+| `analyze_style` | 资深工程师，代码规范和可维护性，ReAct × 6 轮 |
+| `analyze_logic` | 资深工程师，业务逻辑正确性，ReAct × 10 轮 |
+| `reflect / reflect_pr` | 严格评审专家，独立评估，质疑证据充分性 |
 
-### 15. LLM 输出三层防御（Guardrails）
+### 16. LLM 输出三层防御（Guardrails）
 
 ```
 response_format=json_object  →  Pydantic Schema 校验  →  修复 LLM 兜底
@@ -256,22 +312,19 @@ response_format=json_object  →  Pydantic Schema 校验  →  修复 LLM 兜底
 
 `severity` 枚举值容错、`root_cause` 空字符串拦截、API 超时指数退避重试（tenacity 3次，2s→4s→8s）。
 
-### 16. MemoryTool（跨 Issue 经验积累）
+### 17. Memory（跨 Issue / PR 经验积累）
 
 ```python
-# memory_save：分析完成后沉淀经验
-content = f"仓库: fastapi/fastapi | 类型: bug | Issue #1234\n根因: {root_cause}\n修复: {fix_suggestion}"
-_memory_collection.add(documents=[content], metadatas=[{"repo": "fastapi/fastapi"}])
+# Issue memory
+content = f"仓库: fastapi/fastapi | 类型: bug\n根因: {root_cause}\n修复: {fix_suggestion}"
+_memory_collection.add(documents=[content], metadatas=[{"repo": "fastapi/fastapi", "type": "issue"}])
 
-# memory_retrieve：分析前检索同仓库历史模式
-results = _memory_collection.query(
-    query_texts=[f"{issue_type}: {title}"],
-    where={"repo": f"{owner}/{repo}"},   # 只查当前仓库
-    n_results=5,
-)
+# PR memory（独立 metadata 隔离）
+_memory_collection.add(documents=[report], metadatas=[{"repo": "...", "type": "pr_review"}])
+
+# 检索时按 type 过滤，Issue 和 PR 经验不互相污染
+results = _memory_collection.query(query_texts=[...], where={"type": "issue", "repo": ...})
 ```
-
-记忆模式如"auth 模块经常出现权限问题"，为新 Issue 分析提供先验。
 
 ---
 
@@ -291,36 +344,36 @@ results = _memory_collection.query(
 
 **工具升级前后对比（6 rounds → 12 rounds + git tools）**：macro avg 0.521 → 0.570，mypy +0.22，celery +0.16
 
-### LLM Judge 评估体系（多路打分）
+### LLM Judge 评估体系
 
 ```
 AI 分析结果
-    │
     ├─ Bug Judge   → root_cause_accuracy / file_accuracy / severity_fit / fix_actionability
-    ├─ Feature Judge → requirement_understanding / architecture_fit / implementation_feasibility / exists_detection_accuracy
+    ├─ Feature Judge → requirement_understanding / architecture_fit / implementation_feasibility
     └─ Question Judge → confusion_identified / answer_accuracy / actionability
 ```
 
-每个维度 LLM 打分 n=3 次取均值，减少单次方差。ground truth 来源：Bug/Feature 用合并 PR diff，Question 用维护者权威回复。
+每维度 LLM 打分 n=3 次取均值，ground truth：Bug/Feature 用合并 PR diff，Question 用维护者权威回复。
 
-### Question Eval（pydantic × 5 issues，首次）
+### Question Eval（pydantic × 5 issues）
 
-macro avg **0.50**，规律：API 用法问题高分（0.89-0.94），设计决策问题低分（LLM 倾向于"修代码"而非"解释意图"）
+macro avg **0.50**。规律：API 用法问题高分（0.89-0.94），设计决策问题低分（LLM 倾向于"修代码"而非"解释意图"）。
 
 ---
 
-## 测试（151 条，4 层）
+## 测试（227 条，5 层）
 
-| 层级 | 文件 | 内容 |
-|---|---|---|
-| 工具单测 | `test_code_nav.py` | 36 条，9 个工具函数，需本地克隆仓库，无 LLM |
-| LLM工具单测 | `test_llm_utils.py` | 34 条，parse_json / Guardrails / Judge / Report，mock LLM |
-| 节点测试 | `test_nodes.py` | 67 条，所有节点函数，mock LLM |
-| 鲁棒性测试 | `test_robustness.py` | 18 条，空路径、特殊字符、边界输入 |
-| 端到端回归 | `test_regression.py` | 8 条，4 quality（分数门禁）+ 4 smoke（结构验证） |
+| 层级 | 文件 | 条数 | 特点 |
+|---|---|---|---|
+| 工具单测 | `test_code_nav.py` | 36 | 9 个工具函数，需本地克隆仓库，无 LLM |
+| LLM工具单测 | `test_llm_utils.py` | 34 | parse_json / Guardrails / Judge，mock LLM |
+| 节点测试（Issue） | `test_nodes.py` | 76 | 所有节点 + 并行上下文收集，mock LLM |
+| 节点测试（PR） | `test_pr_review.py` | 63 | PR fetch / 三路并行 / graph 结构，mock LLM |
+| 鲁棒性测试 | `test_robustness.py` | 18 | 空路径、特殊字符、边界输入 |
+| 端到端回归 | `test_regression.py` | 8 | 4 quality（分数门禁）+ 4 smoke（结构验证） |
 
 ```bash
-pytest tests/ --ignore=tests/test_regression.py   # 151 条，~13s
+pytest tests/ --ignore=tests/test_regression.py          # 227 条，~20s
 pytest tests/test_regression.py -m "regression and quality"  # 端到端质量门禁
 ```
 
@@ -330,7 +383,8 @@ pytest tests/test_regression.py -m "regression and quality"  # 端到端质量�
 
 | 技术 | 用途 |
 |---|---|
-| **LangGraph** | StateGraph 工作流，条件路由，回环，Send API 并行，SqliteSaver |
+| **LangGraph** | StateGraph 工作流，条件路由，回环，SqliteSaver |
+| **LangGraph Send API** | Issue 上下文三路并行收集 + PR Review 三路并行审查 |
 | **ChromaDB** | 向量数据库，per-repo collection 隔离 + Memory collection |
 | **Sentence Transformers** | 代码/文档向量化（all-MiniLM-L6-v2） |
 | **CrossEncoder** | ms-marco-MiniLM-L-6-v2，Rerank 二次排序 |
@@ -356,7 +410,13 @@ cp .env.example .env
 # 3. 分析 Issue
 python main.py https://github.com/psf/requests/issues/6859
 
-# 4. 跑评估
+# 4. Review PR
+python main.py https://github.com/psf/requests/pull/6789
+
+# 5. Security Issue（触发 HITL 人工审核）
+python main.py https://github.com/fastapi/fastapi/issues/1234 --security
+
+# 6. 跑评估
 python eval/run_eval.py --type bug --owner fastapi --repo fastapi --max 10
 python eval/run_eval.py --type question --owner pydantic --repo pydantic --max 10
 ```
@@ -367,30 +427,36 @@ python eval/run_eval.py --type question --owner pydantic --repo pydantic --max 1
 
 ```
 workflow/
-  nodes/          # 11个节点（fetch/route/analyze/reflect/memory/...）
-  graph.py        # LangGraph StateGraph 定义
-  state.py        # IssueState TypedDict（共享状态/黑板）
+  nodes/              # Issue 分析节点（fetch/route/retrieve/analyze/reflect/memory/...）
+  nodes/analyze_pr.py # PR Review 节点（三路并行 + reflect + report）
+  nodes/fetch_pr.py   # PR 数据拉取 + 图片描述
+  graph.py            # Issue LangGraph StateGraph
+  pr_graph.py         # PR Review LangGraph StateGraph
+  state.py            # IssueState TypedDict（共享黑板）
+  pr_state.py         # PRState TypedDict
 
 tools/
-  code_nav.py     # 9个代码导航工具（MCP 规范）
-  git_history.py  # git log/blame/search
-  stack_trace.py  # traceback 解析
+  code_nav.py         # 9个代码导航工具（MCP 规范）
+  github_api.py       # Issue REST API
+  github_pr_api.py    # PR REST API + diff 过滤
+  git_history.py      # git log/blame/search
+  stack_trace.py      # traceback 解析
 
 context/
-  rag_index.py    # 代码向量化索引
-  repo_loader.py  # 自动 clone + index
-  dep_indexer.py  # import 驱动依赖索引
-  memory_store.py # Issue 经验记忆（MemoryTool）
+  rag_index.py        # 代码向量化索引
+  repo_loader.py      # 自动 clone + index
+  dep_indexer.py      # import 驱动依赖索引
+  memory_store.py     # Issue/PR 经验记忆
 
 eval/
-  dataset.py      # Bug/Feature/Question 数据集构建
-  judge.py        # LLM Judge 多维度打分
-  runner.py       # 评估运行器（断点续跑）
-  report.py       # 汇总报告生成
+  dataset.py          # Bug/Feature/Question 数据集构建
+  judge.py            # LLM Judge 多维度打分
+  runner.py           # 评估运行器（断点续跑）
+  report.py           # 汇总报告生成
 
 agents/
-  repo_agent_server.py   # RepoAgent FastAPI 服务（A2A）
-  orchestrator/          # OrchestratorAgent（层级编排）
+  repo_agent_server.py    # RepoAgent FastAPI 服务（A2A）
+  orchestrator/           # OrchestratorAgent（层级编排）
 
-tests/                   # 151条测试（4层）
+tests/                    # 227条测试（5层）
 ```

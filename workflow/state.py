@@ -47,8 +47,13 @@ class IssueState(TypedDict):
     # parse_stack_trace 节点填入
     stack_trace_context: str
 
-    # retrieve 节点填入
+    # retrieve 节点填入（由 merge_context 组装）
     code_context: str
+
+    # gather_context_part 并行子节点分别写入（仅在 prepare→merge 阶段有效）
+    _entry_ctx: str   # gather_entry_context 写入：grep 定位的入口代码
+    _rag_ctx: str     # gather_rag_context 写入：RAG + dep + callgraph 汇总
+    _git_ctx: str     # gather_git_context 写入：git history（仅 regression）
 
     # memory_retrieve 填入
     memory_context: str
