@@ -8,7 +8,7 @@ import threading
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from workflow.graph import app as langgraph_app
-from eval.judge import judge_single
+from eval.judge import judge_single, judge_feature, judge_question
 
 _write_lock = threading.Lock()
 
@@ -17,6 +17,7 @@ def run_evaluation(
     dataset: list[dict],
     results_path: str = "eval/results.json",
     max_workers: int = 3,
+    eval_type: str = "bug",
 ) -> list[dict]:
     """
     对 dataset 每条数据并行执行：
@@ -51,21 +52,46 @@ def run_evaluation(
         print(f"  [{idx}] 分析完成，置信度: {ai_result.get('confidence', 0):.2f}")
 
         print(f"  [{idx}] 开始 Judge 评分...")
-        scores = judge_single(
-            title=item["title"],
-            body=item["body"],
-            ai_result=ai_result,
-            ground_truth=item,
-        )
-        print(f"  [{idx}] Overall: {scores.get('overall', 0):.2f} | "
-              f"根因: {scores.get('root_cause_accuracy', 0):.2f} | "
-              f"文件: {scores.get('file_accuracy', 0):.2f}")
+        if eval_type == "feature":
+            scores = judge_feature(
+                title=item["title"],
+                body=item["body"],
+                ai_result=ai_result,
+                ground_truth=item,
+            )
+            print(f"  [{idx}] Overall: {scores.get('overall', 0):.2f} | "
+                  f"需求理解: {scores.get('requirement_understanding', 0):.2f} | "
+                  f"架构适配: {scores.get('architecture_fit', 0):.2f} | "
+                  f"可行性: {scores.get('implementation_feasibility', 0):.2f} | "
+                  f"已存在检测: {scores.get('exists_detection_accuracy', 0):.2f}")
+        elif eval_type == "question":
+            scores = judge_question(
+                title=item["title"],
+                body=item["body"],
+                ai_result=ai_result,
+                key_answer=item.get("key_answer", ""),
+            )
+            print(f"  [{idx}] Overall: {scores.get('overall', 0):.2f} | "
+                  f"问题识别: {scores.get('confusion_identified', 0):.2f} | "
+                  f"技术准确: {scores.get('answer_accuracy', 0):.2f} | "
+                  f"可操作: {scores.get('actionability', 0):.2f}")
+        else:
+            scores = judge_single(
+                title=item["title"],
+                body=item["body"],
+                ai_result=ai_result,
+                ground_truth=item,
+            )
+            print(f"  [{idx}] Overall: {scores.get('overall', 0):.2f} | "
+                  f"根因: {scores.get('root_cause_accuracy', 0):.2f} | "
+                  f"文件: {scores.get('file_accuracy', 0):.2f}")
 
         record = {
             "issue_url":    item["issue_url"],
             "issue_number": item["issue_number"],
             "title":        item["title"],
-            "pr_url":       item["pr_url"],
+            "pr_url":       item.get("pr_url", ""),
+            "eval_type":    eval_type,
             "ai_result":    ai_result,
             "scores":       scores,
         }
@@ -105,6 +131,9 @@ def _run_repomind(issue_url: str) -> dict:
             "severity":       state.get("severity", ""),
             "confidence":     state.get("confidence", 0.0),
             "issue_type":     state.get("issue_type", ""),
+            "feature_exists": state.get("feature_exists", False),
+            "existing_api":   state.get("existing_api", ""),
+            "code_changes":   state.get("code_changes", []),
         }
     except Exception as e:
         print(f"  [error] RepoMind 分析失败: {e}")

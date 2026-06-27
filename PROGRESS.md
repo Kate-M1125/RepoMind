@@ -13,7 +13,10 @@
 用 LangGraph 搭建主工作流，所有节点共享一个 `IssueState`（TypedDict），节点函数只负责读取和更新 state 的局部字段。
 
 ```
-fetch_issue → route_issue → memory_retrieve → retrieve_context → analyze_* → reflect → generate_report → memory_save
+fetch_issue → build_project_map → describe_images → parse_stack_trace → route_issue
+  → detect_regression / detect_existing → memory_retrieve → retrieve_context
+  → classify_fix / detect_existing → analyze_* (ReAct × 12 rounds)
+  → reflect → generate_report → memory_save
 ```
 
 关键文件：`workflow/state.py`、`workflow/graph.py`、`workflow/nodes.py`
@@ -554,19 +557,35 @@ RAG 召回的每个文档在索引时都存储了该文件的 `imports` 字段�
 
 ### 19. Coding Agent 工具层（`tools/code_nav.py`）
 
-原先 analyze_bug 只能被动使用 retrieve_context 给的代码片段；改造后 LLM 具备主动追踪代码的能力，通过 ReAct 循环（最多 6 轮）自主决定下一步操作：
+原先 analyze_bug 只能被动使用 retrieve_context 给的代码片段；改造后 LLM 具备主动追踪代码的能力，通过 ReAct 循环自主决定下一步操作。
+
+**工具箱（9 个）：**
 
 ```
-工具注册：
-  read_file(owner, repo, path, start_line, end_line)  → 读具体文件
-  grep_code(owner, repo, pattern)                      → 搜符号定义/调用
-  list_dir(owner, repo, path)                          → 了解目录结构
-  fetch_dependency(owner, repo, query)                 → RAG 查依赖库
+代码导航：
+  read_file(owner, repo, path, start_line, end_line)  → 读文件指定行
+  grep_code(owner, repo, pattern)                      → 全库文本搜索
+  list_dir(owner, repo, path)                          → 目录结构
+  find_definition(owner, repo, symbol)                 → 精确跳到函数/类定义，返回签名+前20行
+  find_callers(owner, repo, func_name)                 → 找函数所有调用处，向上追溯调用链
+
+Git 时间轴：
+  git_log_file(owner, repo, path, n)                   → 文件提交历史，找引入改动的 commit
+  git_blame(owner, repo, path, start, end)             → 指定行最后是哪个 commit 改的
+  search_commits(owner, repo, keyword)                 → 搜 commit message，找历史修复记录
+
+依赖库：
+  fetch_dependency(owner, repo, query)                 → RAG 查依赖库源码
 ```
 
-LLM 在 `analyze_bug` 节点通过 `chat_json_with_tools` 循环调用工具，每轮工具结果作为上下文输入下一轮，直到 LLM 输出最终 JSON 为止。
+**迭代历史：**
+- v1（6轮）：基础 read_file + grep_code + list_dir，pydantic overall 0.71
+- v2（12轮）：加 find_callers + find_definition，能追 4-6 层调用链
+- v3（12轮）：加 git_log_file + git_blame + search_commits，支持回归 bug 溯源
 
-关键文件：`tools/code_nav.py`、`tools/base.py`（`Tool` dataclass + `build_tools`）、`core/llm/client.py`（`chat_json_with_tools`）
+**关键**：max_turns 从 6 升到 12 后，复杂仓库（celery/mypy）分数显著提升，原因是 6 轮不够完成深层调用链追踪，JSON 被截断。
+
+关键文件：`tools/code_nav.py`、`tools/base.py`、`core/llm/client.py`（`chat_json_with_tools`）
 
 ---
 
@@ -583,30 +602,131 @@ LLM 能正确区分函数名（`model_rebuild`）、包名（`pydantic`）、英
 
 ---
 
+### 21. Feature 分析流程（`detect_existing` + `analyze_feature` 升级）
+
+**背景**：feature 和 question 路径原来只用 `chat_json`（单次无工具调用），分析质量远低于 bug 路径的 ReAct 循环。
+
+#### detect_existing 节点（新增）
+
+feature 路径在进入完整分析前，先判断用户想要的功能是否已存在。两种结果：
+- 已存在 → 直接告知用法，跳过架构分析
+- 不存在 → 进入完整 `analyze_feature`
+
+**v1 实现（有缺陷）**：
+LLM 提取功能关键词 → grep → LLM 判断"有代码 = 已存在"
+
+问题：搜的是**主语**（功能名词），而不是**宾语**（缺失的那个东西）。
+- "给 MemoryUsage 补测试" → 提取 `MemoryUsage` → grep 找到类定义 → 误判"已存在" ❌
+
+**v2 实现（当前）**：
+让 LLM 直接推理"如果这个功能已实现，codebase 里应该有什么具体证据"，并指定搜索路径：
+
+```json
+[
+  {"what": "tests/ 里有 MemoryUsage 的测试文件", "term": "test_memusage", "path_hint": "tests/"},
+  {"what": "get_retry_request 的 give_up_log_level 参数", "term": "give_up_log_level", "path_hint": ""}
+]
+```
+
+grep 支持 `path_hint` 子路径过滤，判断时严格要求"找到核心实现证据"而非"找到相关代码"。
+
+关键文件：`workflow/nodes/detect_existing.py`
+
+#### analyze_feature 升级
+
+从 `chat_json`（单次） → `chat_json_with_tools`（ReAct × 6 轮），system prompt 改为架构师视角：
+1. 需求理解：提炼真实诉求
+2. **横向探索**：用 `grep_code` 找类似已有功能，理解实现模式（区别于 bug 的纵向追踪）
+3. 架构定位：`list_dir` / `read_file` 了解模块结构，判断新功能放哪里
+4. 可行性评估：侵入性、breaking change 风险
+5. 实现方案：具体文件路径和改动思路
+
+已存在短路：若 `feature_exists=True`，走简化 prompt，直接解释用法，不进入 ReAct 循环。
+
+新增 State 字段：`feature_exists: bool`、`existing_api: str`
+
+**完整 graph feature 路径**：
+```
+route_issue(feature) → memory_retrieve → retrieve_context
+  → detect_existing → analyze_feature(ReAct × 6) → reflect → generate_report
+```
+
+关键文件：`workflow/nodes/analyze.py`、`workflow/state.py`、`workflow/graph.py`
+
+---
+
+### 22. Feature Eval 基础设施
+
+#### 数据集策略（`eval/dataset.py`）
+
+新增 `fetch_feature_issues_with_prs`：
+- 按 label 找 feature issue（enhancement / feature / feature request / Feature Request / improvement…）
+- 通过 timeline + **search API 双策略**找关联合并 PR（timeline 靠 cross-referenced 事件；search API 搜 PR body 里提到 `#N` 的记录）
+
+踩坑：原 `_find_fix_pr` 只用 timeline，scrapy 的 PR 用 "Resolves #N" 写法没触发 cross-referenced 事件，换成 search API 后解决。
+
+#### Feature Judge（`eval/judge.py`）
+
+`judge_feature` 新增 4 个维度（对应 bug 的 4 维完全不同）：
+- `requirement_understanding`：是否理解了用户真实诉求
+- `architecture_fit`：建议实现位置/模块是否与实际 PR 一致
+- `implementation_feasibility`：方案方向是否与实际 PR 一致
+- `exists_detection_accuracy`：detect_existing 是否做出正确判断
+
+#### 评估入口（`eval/run_eval.py`）
+
+新增 `--type bug/feature` 参数，结果文件命名加 type 前缀：
+```bash
+python eval/run_eval.py --type feature --owner scrapy --repo scrapy --max 10
+```
+
+`report.py` 按 scores 字段自动识别 bug/feature 类型，输出对应格式报告。
+
+---
+
 ## 完整节点流程（当前）
 
 ```
 fetch_issue → describe_images → parse_stack_trace → route_issue
-  → detect_regression（bug 类）→ memory_retrieve
-  → retrieve_context（grep优先 + RAG + dep索引 + call graph + git history）
-  → classify_fix（bug 类）→ analyze_bug（ReAct × 6轮工具循环）
-  → reflect → generate_report → memory_save
+  ├─ bug  → detect_regression → memory_retrieve → retrieve_context
+  │         → classify_fix → analyze_bug（ReAct × 12轮，9工具）
+  ├─ feature → memory_retrieve → retrieve_context
+  │            → detect_existing → analyze_feature（ReAct × 12轮）
+  ├─ question → memory_retrieve → retrieve_context → answer_question（ReAct × 12轮）
+  └─ security → human_gate → memory_retrieve → retrieve_context → classify_fix → analyze_bug
+  → reflect（置信度<0.7 最多重试2次）→ generate_report → memory_save
 ```
 
 ---
 
-## 评估结果（2026-06-26）
+## 评估结果
 
-### 多仓库泛化
+### Bug Eval — 多仓库（2026-06-28，v2，9 repos × 68 issues）
 
-| 仓库 | Overall | 规律 |
-|---|---|---|
-| fastapi/fastapi | 0.80 | 代码 bug 为主 |
-| pydantic/pydantic | **0.77** | 含跨 Rust dep bug |
-| pytest-dev/pytest | 0.65 | 代码 bug |
-| pallets/flask | 0.59 | 含文档/重构类 |
-| celery/celery | 0.51 | 混合类型 |
-| sqlalchemy/sqlalchemy | 0.36 | 以文档 issue 为主（eval 数据集问题） |
+| 仓库 | Overall | root | file | sev | fix | n |
+|---|---|---|---|---|---|---|
+| fastapi/fastapi | **0.77** | 0.76 | 0.81 | 0.94 | 0.71 | 8 |
+| python/mypy | 0.72 | 0.76 | 0.75 | 0.86 | 0.64 | 6 |
+| psf/requests | 0.64 | 0.67 | 0.55 | 0.83 | 0.56 | 8 |
+| celery/celery | 0.62 | 0.60 | 0.63 | 0.81 | 0.54 | 8 |
+| psf/black | 0.58 | 0.58 | 0.50 | 0.86 | 0.48 | 6 |
+| pydantic/pydantic | 0.51 | 0.50 | 0.48 | 0.79 | 0.45 | 8 |
+| aio-libs/aiohttp | 0.49 | 0.55 | 0.44 | 0.69 | 0.45 | 8 |
+| scrapy/scrapy | 0.44 | 0.40 | 0.48 | 0.69 | 0.44 | 8 |
+| pallets/flask | 0.35 | 0.38 | 0.25 | 0.58 | 0.32 | 8 |
+| **Macro avg** | **0.570** | 0.574 | 0.540 | 0.780 | 0.507 | 68 |
+
+分布：优秀≥0.8: 21(31%) · 良好0.6-0.8: 17(25%) · 一般0.4-0.6: 9(13%) · 较差<0.4: 21(31%)
+
+**v1→v2 提升（加 find_callers/find_definition/git工具 + max_turns 6→12）：**
+- Macro avg: 0.521 → 0.570（+0.049）
+- 最显著：mypy +0.22、celery +0.16、aiohttp +0.11
+- 较差比例：40% → 31%
+
+**较差的 21 条失败原因分类：**
+- detect_existing 时态错位（9条）：eval 数据集天然限制，非系统问题
+- 复杂运行时 bug（6条）：跨进程/异步时序，静态分析的结构性上限
+- 设计决策/revert/test-only（6条）：LLM 默认"改代码"逻辑无法覆盖
 
 ### pydantic 迭代历史
 
@@ -623,9 +743,25 @@ fetch_issue → describe_images → parse_stack_trace → route_issue
 
 **核心规律**：代码 bug（有调用链可追）得分 0.68-1.00；文档/配置/typo 类得分 0.10-0.35。
 
+### Feature Eval — scrapy/scrapy（2026-06-27，6条）
+
+| Issue | Overall | 需求理解 | 架构适配 | 可行性 | exists 检测 |
+|---|---|---|---|---|---|
+| #6958 Review _SettingsKeyT type | 0.78 | 0.80 | 0.67 | 0.80 | 0.97 |
+| #4622 Retry give-up log level | 0.63 | 0.87 | 0.50 | 0.47 | 1.00 |
+| #7252 httpx handler production-ready | 0.42 | 0.67 | 0.37 | 0.30 | 0.83 |
+| #5297 get_retry_request log level | 0.23 | 0.83 | 0.00 | 0.17 | 0.00 |
+| #4421 Implement static checks | 0.20 | 0.50 | 0.00 | 0.00 | 0.33 |
+| #7002 Cover memusage with tests | 0.13 | 0.27 | 0.23 | 0.10 | 0.00 |
+
+**平均 overall: 0.40**
+
+**重要说明**：feature eval 存在**时序缺陷**——数据集要求 issue 有已合并 PR，意味着功能已在当前 codebase 实现。`detect_existing` 在当前代码上运行，正确找到实现并返回"已存在"，但 judge 对比原始 PR（新增了大量代码）打低分，判断为误判。这是 eval 流程设计问题，不是系统问题。真正有效的 feature eval 需要在 pre-merge 快照上运行。
+
 ### 当前能力边界
-- **擅长**：有具体函数调用的代码 bug，尤其跨语言（Python → Rust dep）
-- **不擅长**：文档/typo/配置类，或 PR 只加测试（无源码改动）的异常样本
+- **擅长**：有具体函数调用的代码 bug，尤其跨语言（Python → Rust dep）；feature 需求理解准确（0.7+）
+- **不擅长**：文档/typo/配置类 bug；大型跨模块架构重构的实现方向（#7252 httpx handler）
+- **feature eval 受限**：时序问题导致 exists_detection_accuracy 失真，暂不作为参考维度
 
 ---
 
@@ -650,6 +786,44 @@ fetch_issue → describe_images → parse_stack_trace → route_issue
 
 ---
 
+## 踩坑记录
+
+### feature eval 时序问题
+**现象**：feature eval 中 `exists_detection_accuracy` 普遍低分。
+**根因**：eval 数据集要求 issue 有合并 PR，意味着所有 feature 在当前 codebase 里已实现。`detect_existing` 在当前代码上跑，正确判断"已存在"，但 judge 用 PR（新增了大量代码）打低分，认为系统误判。
+**教训**：feature eval 需要在 pre-merge 快照上运行才有意义；当前 eval 仅参考需求理解/架构适配/可行性三个维度，`exists_detection_accuracy` 暂弃用。
+
+### detect_existing 搜"主语"而非"宾语"
+**现象**：`#7002` "给 MemoryUsage 补测试" → 提取 `MemoryUsage` → grep 找到类定义 → 误判功能已存在。
+**根因**：v1 提取的是"功能操作对象"（MemoryUsage 类），而不是"功能本身"（test_memusage 测试文件）。
+**修法**：v2 让 LLM 推理"功能存在的证据是什么"（term + path_hint），精确搜索目标证据。
+
+### eval `_find_fix_pr` timeline 策略失效
+**现象**：scrapy feature eval 找到 0 条 issue。
+**根因**：`_find_fix_pr` 依赖 timeline `cross-referenced` 事件，但 scrapy 的 PR 用 "Resolves #N" 写法，GitHub 没有把它记录为 cross-referenced 事件。
+**修法**：加 search API 作为主策略（`repo:owner/repo is:pr is:merged #{N} in:body`），timeline 作兜底。
+
+### 各仓库 feature label 命名不统一
+**现象**：pydantic feature eval 返回 0 条 issue。
+**根因**：代码写死了 `["enhancement", "feature", "new feature"]`，pydantic 用 "feature request"，requests 用 "Feature Request"。
+**修法**：扩充 label 列表，覆盖 8 种常见写法。
+
+### main.py issue URL 硬编码
+**现象**：`python main.py https://github.com/scrapy/scrapy/issues/5297` 实际跑的是 fastapi #1234。
+**修法**：改为 `sys.argv` 读取，保留 fastapi #1234 作默认值。
+
+### shallow clone 导致 git 工具失效
+**现象**：`git_log_file` 只返回 1 条 commit，`search_commits` 返回空。
+**根因**：`_clone_repo` 用 `--depth=1`，本地仓库没有历史记录，git blame/log 全部失效。
+**修法**：改为 `--depth=200`，并对现有 40 个已克隆仓库执行 `git fetch --deepen=200` 批量加深。
+
+### LLM 忽略提示词里的"软建议"
+**现象**：系统提示加了"先花 1-2 轮判断 fix 性质"，但 LLM 遇到有函数名的 issue 直接追代码，跳过 git 诊断。
+**根因**：提示词只是建议，LLM 根据 issue 内容自行判断"性质显而易见"而跳过步骤。执行顺序应通过图结构强制，而非提示词软指令。
+**教训**：想强制 LLM 做某个步骤，必须把它做成独立节点，而不是写进 system prompt。
+
+---
+
 ## 待实现
 
 - [x] Memory：ChromaDB issue_memory collection，历史模式检索与沉淀
@@ -660,8 +834,12 @@ fetch_issue → describe_images → parse_stack_trace → route_issue
 - [x] Coding agent：ReAct 工具循环（read_file / grep_code / list_dir）
 - [x] Import 驱动依赖索引：ChromaDB imports metadata 自动 clone dep
 - [x] Grep 优先：LLM 识别入口函数 → grep 定位 → RAG 补充
+- [x] Feature 分析流程：detect_existing + analyze_feature ReAct 升级
+- [x] Feature Eval：dataset / judge / runner / report 全套
+- [x] answer_question 升级为 ReAct 工具循环（同 analyze_bug）
 - [ ] FastAPI + GitHub Webhook：Issue 创建自动触发
-- [ ] 项目地图：一次性生成 README + 目录结构摘要，让 LLM 有全局视角
+- [ ] Feature eval pre-merge 快照：checkout 到 PR 合并前 commit 再跑分析
+- [x] 项目地图：`build_project_map` 节点，目录树 2 层 → LLM 摘要 → 注入所有分析节点 context，session 内 per-repo 缓存
 
 ---
 

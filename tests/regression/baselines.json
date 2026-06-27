@@ -1,0 +1,42 @@
+[
+  {
+    "issue_url": "https://github.com/psf/requests/issues/6859",
+    "pr_url": "https://github.com/psf/requests/pull/6865",
+    "issue_number": 6859,
+    "owner": "psf",
+    "repo": "requests",
+    "min_score": 0.85,
+    "expected_score": 1.0,
+    "note": "requests 经典 bug，代码链路短，答案唯一"
+  },
+  {
+    "issue_url": "https://github.com/pydantic/pydantic/issues/12718",
+    "pr_url": "https://github.com/pydantic/pydantic/pull/12897",
+    "issue_number": 12718,
+    "owner": "pydantic",
+    "repo": "pydantic",
+    "min_score": 0.80,
+    "expected_score": 0.983,
+    "note": "validators.py，跨 Rust dep，grep 可稳定定位"
+  },
+  {
+    "issue_url": "https://github.com/fastapi/fastapi/issues/10236",
+    "pr_url": "https://github.com/fastapi/fastapi/pull/10240",
+    "issue_number": 10236,
+    "owner": "fastapi",
+    "repo": "fastapi",
+    "min_score": 0.75,
+    "expected_score": 0.967,
+    "note": "类型注解不一致，fastapi/applications.py，答案明确"
+  },
+  {
+    "issue_url": "https://github.com/psf/black/issues/5164",
+    "pr_url": "https://github.com/psf/black/pull/5167",
+    "issue_number": 5164,
+    "owner": "psf",
+    "repo": "black",
+    "min_score": 0.75,
+    "expected_score": 0.917,
+    "note": "black 格式化 bug，改动集中"
+  }
+]

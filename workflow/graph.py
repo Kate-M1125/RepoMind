@@ -4,8 +4,9 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from config import settings
 from workflow.state import IssueState
 from workflow.nodes import (
-    fetch_issue, route_issue, detect_regression, classify_fix,
+    fetch_issue, route_issue, detect_regression, detect_existing, classify_fix,
     describe_images, parse_stack_trace,
+    build_project_map,
     human_gate,
     memory_retrieve, memory_save,
     retrieve_context,
@@ -49,11 +50,13 @@ def decide_reflection(state: IssueState) -> str:
 def build_graph():
     graph = StateGraph(IssueState)
 
-    graph.add_node("fetch_issue",      _wrap("fetch_issue",      fetch_issue))
+    graph.add_node("fetch_issue",       _wrap("fetch_issue",       fetch_issue))
+    graph.add_node("build_project_map", _wrap("build_project_map", build_project_map))
     graph.add_node("describe_images",   _wrap("describe_images",   describe_images))
     graph.add_node("parse_stack_trace", _wrap("parse_stack_trace", parse_stack_trace))
-    graph.add_node("route_issue",        _wrap("route_issue",        route_issue))
+    graph.add_node("route_issue",       _wrap("route_issue",       route_issue))
     graph.add_node("detect_regression",  _wrap("detect_regression",  detect_regression))
+    graph.add_node("detect_existing",    _wrap("detect_existing",    detect_existing))
     graph.add_node("classify_fix",       _wrap("classify_fix",       classify_fix))
     graph.add_node("human_gate",         _wrap("human_gate",         human_gate))
     graph.add_node("memory_retrieve",  _wrap("memory_retrieve",  memory_retrieve))
@@ -66,7 +69,8 @@ def build_graph():
     graph.add_node("memory_save",      _wrap("memory_save",      memory_save))
 
     graph.add_edge(START, "fetch_issue")
-    graph.add_edge("fetch_issue", "describe_images")
+    graph.add_edge("fetch_issue", "build_project_map")
+    graph.add_edge("build_project_map", "describe_images")
     graph.add_edge("describe_images", "parse_stack_trace")
     graph.add_edge("parse_stack_trace", "route_issue")
 
@@ -90,18 +94,19 @@ def build_graph():
     # 查完记忆再检索代码上下文
     graph.add_edge("memory_retrieve", "retrieve_context")
 
-    # bug 类先分类修复类型，再分析
+    # bug 类先分类修复类型；feature 先检测是否已存在；其他直接分析
     graph.add_conditional_edges(
         "retrieve_context",
         decide_route,
         {
             "bug":      "classify_fix",
-            "feature":  "analyze_feature",
+            "feature":  "detect_existing",
             "question": "answer_question",
             "security": "classify_fix",
         }
     )
     graph.add_edge("classify_fix", "analyze_bug")
+    graph.add_edge("detect_existing", "analyze_feature")
 
     graph.add_edge("analyze_bug",     "reflect")
     graph.add_edge("analyze_feature", "reflect")

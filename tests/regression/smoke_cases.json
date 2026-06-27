@@ -1,0 +1,30 @@
+[
+  {
+    "issue_url": "https://github.com/celery/celery/issues/3596",
+    "issue_number": 3596,
+    "owner": "celery",
+    "repo": "celery",
+    "note": "AsyncResult exists() 检查，分析链路复杂，只验结构"
+  },
+  {
+    "issue_url": "https://github.com/aio-libs/aiohttp/issues/12795",
+    "issue_number": 12795,
+    "owner": "aio-libs",
+    "repo": "aiohttp",
+    "note": "aiohttp 异步网络层，分析深度不稳定"
+  },
+  {
+    "issue_url": "https://github.com/python/mypy/issues/16736",
+    "issue_number": 16736,
+    "owner": "python",
+    "repo": "mypy",
+    "note": "mypy 类型推断，高专业度，judge 方差大"
+  },
+  {
+    "issue_url": "https://github.com/scrapy/scrapy/issues/7409",
+    "issue_number": 7409,
+    "owner": "scrapy",
+    "repo": "scrapy",
+    "note": "scrapy 爬虫框架，调用链多变"
+  }
+]

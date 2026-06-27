@@ -22,6 +22,10 @@ class IssueState(TypedDict):
     # classify_fix 节点填入
     fix_type: str  # code_fix / dependency_upgrade / config_fix
 
+    # detect_existing 节点填入（feature 专用）
+    feature_exists: bool
+    existing_api: str  # 已存在时描述用法；不存在时为空
+
     # analyze 节点填入
     root_cause: str
     fix_suggestion: str
@@ -51,6 +55,9 @@ class IssueState(TypedDict):
 
     # human_gate 填入
     human_decision: str
+
+    # build_project_map 节点填入
+    project_map: str
 
     # 控制流用
     iteration: int
