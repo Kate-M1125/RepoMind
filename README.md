@@ -152,11 +152,6 @@ Checkpoint 持久化到 SQLite，进程重启后暂停状态不丢失。
 | python/mypy | 0.72 |
 | psf/requests | 0.64 |
 | celery/celery | 0.62 |
-| psf/black | 0.58 |
-| pydantic/pydantic | 0.51 |
-| aio-libs/aiohttp | 0.49 |
-| scrapy/scrapy | 0.44 |
-| pallets/flask | 0.35 |
 | **Macro avg** | **0.570** |
 
 优秀(≥0.8): 31% · 良好(0.6-0.8): 25% · 一般(0.4-0.6): 13% · 较差(<0.4): 31%
