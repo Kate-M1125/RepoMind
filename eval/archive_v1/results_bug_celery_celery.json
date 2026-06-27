@@ -1,0 +1,225 @@
+[
+  {
+    "issue_url": "https://github.com/celery/celery/issues/3596",
+    "issue_number": 3596,
+    "title": "AsyncResult task existence check with arbitrary task id",
+    "pr_url": "https://github.com/celery/celery/pull/10142",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "The default behavior of returning `PENDING` for unknown task IDs is by design, as confirmed by ask's comments. This is an optimization because tasks only update state themselves. The `exists()` method was added in 5.7.0 to distinguish pending tasks from non-existent ones.",
+      "fix_suggestion": "Use the `exists()` method available in Celery 5.7.0+ to check if a result exists for a task ID before interpreting `PENDING` state. For earlier versions, implement custom task tracking via signals (before_task_publish, task_prerun, task_postrun, etc.) or use Flower for monitoring.",
+      "affected_files": [
+        "celery/result.py"
+      ],
+      "severity": "low",
+      "confidence": 0.9,
+      "issue_type": "bug",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 0.667,
+      "file_accuracy": 0.5,
+      "severity_fit": 0.833,
+      "fix_actionability": 1.0,
+      "overall": 0.733,
+      "reasoning": "AI 准确识别了根因，即需要区分 pending 与不存在，并推荐了 exists() 方法。文件方面 AI 只提到了 result.py，但 PR 修改了多个后端的实现，不过 result.py 是核心文件。严重程度设为 low 是合理的，因为这是一个功能增强。修复建议与实际 PR 高度一致，都推荐使用 exists() 方法。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/celery/celery/issues/10215",
+    "issue_number": 10215,
+    "title": "Missing dependency extra group for Google Cloud PubSub",
+    "pr_url": "https://github.com/celery/celery/pull/10216",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "requirements/extras/gcpubsub.txt 只写了 `kombu[gcpubsub]>=5.5.0`，没有直接列出实际的 Python 依赖包（如 google-cloud-pubsub），导致 pip install celery[gcpubsub] 时依赖无法正确传播安装。",
+      "fix_suggestion": "修改 requirements/extras/gcpubsub.txt，直接列出所有必要的 Python 包，包括 google-cloud-pubsub 等，同时保留对 kombu[gcpubsub] 的依赖以确保传输层兼容。可参考 sqs.txt 或 gcs.txt 的写法。",
+      "affected_files": [
+        "requirements/extras/gcpubsub.txt"
+      ],
+      "severity": "medium",
+      "confidence": 0.85,
+      "issue_type": "bug",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 0.167,
+      "file_accuracy": 0.5,
+      "severity_fit": 0.667,
+      "fix_actionability": 0.167,
+      "overall": 0.283,
+      "reasoning": "AI分析认为根因是gcpubsub.txt中缺少直接依赖列表，但实际根因是setup.py中缺少'gcpubsub'条目，导致依赖组未被注册，gcpubsub.txt内容本身正确。AI列出的受影响文件仅包含gcpubsub.txt，缺少关键文件setup.py。严重程度medium合理。修复建议要求直接列出所有依赖包，但实际修复仅添加了'setup.py'中的组名，并未修改gcpubsub.txt内容，因此建议方向错误。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/celery/celery/issues/10205",
+    "issue_number": 10205,
+    "title": "Celery worker stops consuming Redis tasks after broker connection reset (Connection reset by peer) and does not recover automatically",
+    "pr_url": "https://github.com/celery/celery/pull/10218",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "kombu 的 hub.fire_timers 方法中，当定时器回调抛出异常且该异常类在 propagate 元组中时，异常直接向上传播而不被记录或吞掉。Celery 的 asynloop 将 connection.connection_errors（包含 ConnectionError）设为 hub.propagate_errors。当 Redis 连接重置后，maybe_restore_messages 定时器回调尝试获取 Redis 锁时因连接断开抛出 ConnectionError，该异常通过 propagate 机制直接终止事件循环生成器，导致整个事件循环崩溃。重连后，旧定时器条目未完全清除，可能再次触发导致重复崩溃。",
+      "fix_suggestion": "1. 在 kombu/asynchronous/hub.py 的 fire_timers 方法中，不要将连接错误类放入 propagate 参数，或者修改 propagate 逻辑使其不跳过日志记录；2. 在 kombu/transport/redis.py 的 maybe_restore_messages 方法中捕获 ConnectionError 并记录日志后安全返回；3. 在 celery/worker/loops.py 的 asynloop 异常处理中，除了 hub.reset() 和 hub.timer.clear()，还需确保旧连接的所有引用被清除。",
+      "affected_files": [
+        "kombu/asynchronous/hub.py",
+        "kombu/transport/redis.py",
+        "celery/worker/loops.py"
+      ],
+      "severity": "critical",
+      "confidence": 0.75,
+      "issue_type": "bug",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 0.733,
+      "file_accuracy": 0.32,
+      "severity_fit": 1.0,
+      "fix_actionability": 0.667,
+      "overall": 0.643,
+      "reasoning": "根因方向正确：AI 指出定时器回调（如 maybe_restore_messages）在重连后重复触发导致崩溃，与实际 PR 中清除定时器队列以避免陈旧条目在异常后触发的修复一致。但 AI 过度强调了 propagate 机制和 kombu 层修改，而实际修复仅涉及 celery/worker/loops.py 的异常处理中清除定时器的逻辑，因此根因精度（0.7）和受影响文件（0.3，仅有 loops.py 相关，另两个文件未修改）得分不高。severity 为 critical 合理。修复建议与 PR 的核心（清除定时器）方向一致，但 AI 额外提议了 kombu 层的修改，这些未在 PR 中出现，因此可操作性中等（0.6）。综合评分 0.6。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/celery/celery/issues/9523",
+    "issue_number": 9523,
+    "title": "Clarify meaning of higher or lower int for priority",
+    "pr_url": "https://github.com/celery/celery/pull/10238",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "The documentation in celery/app/task.py already clarifies the broker-specific priority interpretation. The user's request to add a generic statement like 'higher values mean higher priority' would be inaccurate because Redis treats lower values as higher priority.",
+      "fix_suggestion": "No change needed. The existing documentation at celery/app/task.py:590-595 already explains the broker-specific interpretation. If anything, ensure the documentation references are linked correctly (e.g., :ref:`routing-options-rabbitmq-priorities` and :ref:`redis-message-priorities`).",
+      "affected_files": [],
+      "severity": "low",
+      "confidence": 0.85,
+      "issue_type": "question",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 0.167,
+      "file_accuracy": 0.5,
+      "severity_fit": 0.833,
+      "fix_actionability": 0.0,
+      "overall": 0.208,
+      "reasoning": "AI分析的根因错误，它认为文档已足够无需修改，而实际PR需要澄清优先级语义，因此根因完全偏离。受影响文件部分重叠，AI提到了错误处理的文件但未列出实际修改的文档文件。严重程度评级为low，但实际修复涉及多处文档修改且对用户理解至关重要，应评为medium或higher。修复建议是无需更改，与实际PR完全相反，因此不可行。综合评分较低。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/celery/celery/issues/6912",
+    "issue_number": 6912,
+    "title": "Celery producer witch rpc backend cannot fetch results when rabbitmq is restarted",
+    "pr_url": "https://github.com/celery/celery/pull/10179",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "ResultConsumer._reconnect() 在 broker 重启后重新创建消费者时，没有重新声明旧的队列。由于这些队列设置了 auto_delete=True，RabbitMQ 重启后它们已不存在，导致消费者订阅了不存在的队列，drain_events 永远收不到结果消息。",
+      "fix_suggestion": "在 ResultConsumer._reconnect() 方法中，创建新消费者之后、调用 consume() 之前，遍历 old_queues 并显式声明每个队列。具体地，在 self._consumer = self.Consumer(...) 之后、self._consumer.consume() 之前，添加代码：for queue in old_queues: queue.declare()。或者更稳健的做法是创建一个新的队列对象（通过 self._create_binding 重新创建），因为旧的队列对象可能持有过时的通道引用。推荐修改：在建立新连接后，使用 self._create_binding 为每个 old_queue 的名称重新创建队列对象并 declare。",
+      "affected_files": [
+        "celery/backends/rpc.py"
+      ],
+      "severity": "high",
+      "confidence": 0.95,
+      "issue_type": "bug",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 0.8,
+      "file_accuracy": 0.5,
+      "severity_fit": 1.0,
+      "fix_actionability": 0.567,
+      "overall": 0.725,
+      "reasoning": "AI correctly identified that the root cause is related to reconnection after broker restart and the need to redeclare queues, which aligns with the PR's modifications to ResultConsumer in rpc.py. However, the AI missed that the PR also fixes a broader issue in drain_events_until in asynchronous.py to handle OSErrors, making the root cause slightly incomplete. The AI mentioned only rpc.py as affected file, but the PR also modifies asynchronous.py and test files, so file accuracy is partial. Severity rating high is appropriate given the bug causes permanent result retrieval failure. The fix suggestion to redeclare queues is partially correct and implemented in the PR, but the PR's approach is more comprehensive, using a context manager to manage queue re-declaration, so the suggestion is actionable but not exact.",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/celery/celery/issues/9861",
+    "issue_number": 9861,
+    "title": "Full IANA time zone support",
+    "pr_url": "https://github.com/celery/celery/pull/9862",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "解析失败，请人工查看原始 Issue",
+      "fix_suggestion": "LLM 输出格式异常，建议重试",
+      "affected_files": [],
+      "severity": "medium",
+      "confidence": 0.0,
+      "issue_type": "feature",
+      "feature_exists": true,
+      "existing_api": "配置时区时使用 `from zoneinfo import ZoneInfo; app.conf.timezone = ZoneInfo('Asia/Shanghai')` 即可获取 IANA 时区名（如 `str(ZoneInfo('Asia/Shanghai'))` 输出 `'Asia/Shanghai'`）。"
+    },
+    "scores": {
+      "root_cause_accuracy": 0.0,
+      "file_accuracy": 0.0,
+      "severity_fit": 0.5,
+      "fix_actionability": 0.0,
+      "overall": 0.05,
+      "reasoning": "AI分析结果由于解析失败，未能提供任何有效信息，根因、受影响文件和修复建议均为空或格式异常，与真实PR（通过tzlocal替代LocalTimezone实现IANA时区支持）完全不符。严重程度medium尚可接受，但其他维度得分为0。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/celery/celery/issues/10194",
+    "issue_number": 10194,
+    "title": "Soft time limit does not trigger `on_failure` callbacks or update the result backend",
+    "pr_url": "https://github.com/celery/celery/pull/10226",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "软超时（soft time limit）的处理是正确的：父进程的 on_timeout(soft=True) 仅记录警告，但通过向子进程发送 SIGUSR1 信号，子进程在 trace_task 中捕获 SoftTimeLimitExceeded 异常，并通过 TraceInfo.handle_failure() 完整执行了 backend.mark_as_failure()、task.on_failure()、signals.task_failure.send() 和 errbacks。因此，不存在 on_failure 未触发或结果后端未更新的问题。硬超时路径在 on_timeout(soft=False) 中也已经正确实现了完整的失败处理。当前行为是符合设计的，不属于 Bug。",
+      "fix_suggestion": "无需代码修改。建议改进文档：在 on_timeout 的文档字符串和用户指南中更清晰地说明软超时失败处理发生在子进程的 trace_task 中，而非父进程的 on_timeout 中。同时，可以添加一个软超时事件（task-soft-time-limit）的发送以增强实时监控能力。",
+      "affected_files": [
+        "celery/worker/request.py",
+        "celery/app/trace.py"
+      ],
+      "severity": "low",
+      "confidence": 0.9,
+      "issue_type": "bug",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 0.0,
+      "file_accuracy": 0.333,
+      "severity_fit": 0.0,
+      "fix_actionability": 0.0,
+      "overall": 0.067,
+      "reasoning": "AI 认为问题不存在，但实际 PR 修复了硬超时没有正确触发失败处理的问题，根因完全错误。文件层面虽然提到了 request.py，但实际修改涉及多处且 AI 未识别关键改动。严重程度 AI 评为 low，但 PR 修复了错误标记，应为较高。修复建议与 PR 无关。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/celery/celery/issues/5886",
+    "issue_number": 5886,
+    "title": "celery.result.get() return value and type is missing form documentation",
+    "pr_url": "https://github.com/celery/celery/pull/10240",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "AsyncResult.get() 的 docstring 已包含返回值和类型说明，但 Sphinx 自动生成的文档可能没有良好渲染，或者用户期望更清晰的类型标注和详细说明。",
+      "fix_suggestion": "在 celery/result.py 的 AsyncResult.get() 方法文档字符串中，明确添加 :rtype: Any 并强化返回说明，特别强调当 propagate=False 且任务异常时返回异常实例。",
+      "affected_files": [
+        "celery/result.py"
+      ],
+      "severity": "low",
+      "confidence": 0.6,
+      "issue_type": "feature",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 1.0,
+      "file_accuracy": 1.0,
+      "severity_fit": 1.0,
+      "fix_actionability": 0.833,
+      "overall": 0.967,
+      "reasoning": "AI 根因分析指出文档缺少返回值类型说明，与实际 PR 补充文档一致，完全匹配。受影响文件 celery/result.py 与 PR 修改文件相同。严重程度 low 合理，因为是文档缺失。修复建议添加 :rtype: 和返回说明，与 PR 实际添加的 Returns 部分高度一致。",
+      "judge_runs": 3
+    }
+  }
+]

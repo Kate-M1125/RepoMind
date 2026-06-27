@@ -1,0 +1,243 @@
+[
+  {
+    "issue_url": "https://github.com/pallets/flask/issues/5895",
+    "issue_number": 5895,
+    "title": "change default redirect code to 303",
+    "pr_url": "https://github.com/pallets/flask/pull/5898",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "该功能已在Flask 3.2中实现，用户需求已被满足。",
+      "fix_suggestion": "无需修复，已存在。",
+      "affected_files": [],
+      "severity": "low",
+      "confidence": 0.9,
+      "issue_type": "feature",
+      "feature_exists": true,
+      "existing_api": "在 Flask 的 app.py 和 helpers.py 中，`redirect` 函数已将默认状态码改为 303（`code: int = 303`），替代了原先的 302。"
+    },
+    "scores": {
+      "root_cause_accuracy": 0.0,
+      "file_accuracy": 0.0,
+      "severity_fit": 0.333,
+      "fix_actionability": 0.0,
+      "overall": 0.075,
+      "reasoning": "AI认为该功能已在Flask 3.2中实现，但实际PR正是将默认状态码从302改为303的实现，并非已存在。AI完全误解了issue意图，根因分析错误。未提供受影响的文件，与PR修改的四个文件无重叠。严重程度应为中等或较高，AI评为low不合理。修复建议为无需修复，与实际PR的更改方向完全相反。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/pallets/flask/issues/5961",
+    "issue_number": 5961,
+    "title": "Flask 3.1.3 test (`test_environ_for_valid_idna_completes`) breaks after Werkzeug update from 3.1.6 to 3.1.7",
+    "pr_url": "https://github.com/pallets/flask/pull/5962",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "Werkzeug 3.1.7 在 src/werkzeug/sansio/utils.py 第 11-18 行引入 _host_re 正则表达式，该正则仅允许 ASCII 字符（a-z0-9.-），导致包含非 ASCII（IDNA）或下划线的 Host 头部被拒绝，返回 400。Flask 测试 test_environ_for_valid_idna_completes 使用了 IDNA 兼容的非 ASCII 域名，因此失败。",
+      "fix_suggestion": "临时修复：降级 Werkzeug 到 3.1.6，执行 `pip install werkzeug==3.1.6`。长期修复：在 pyproject.toml 或 requirements.txt 中将 Werkzeug 版本限制为 `<3.1.7`，例如使用 `werkzeug>=3.0.0,<3.1.7`，等待 Flask 官方发布兼容更新或 Werkzeug 修复 IDNA 支持。",
+      "affected_files": [
+        "pyproject.toml",
+        "requirements.txt"
+      ],
+      "severity": "high",
+      "confidence": 0.9,
+      "issue_type": "bug",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 0.0,
+      "file_accuracy": 0.0,
+      "severity_fit": 0.333,
+      "fix_actionability": 0.0,
+      "overall": 0.075,
+      "reasoning": "AI 分析将根因归结为 Werkzeug 的 _host_re 正则表达式，但实际 PR 只是删除了一个包含非 ASCII 域名的测试用例，并未修改任何库文件或依赖版本。AI 指出的受影响文件（pyproject.toml, requirements.txt）与 PR 实际修改的 tests/test_reqctx.py 完全不匹配。严重程度评估为 high 而实际仅删除一个测试，并非紧急修复。修复建议要求降级或限制 Werkzeug 版本，与 PR 的测试删除操作完全无关。综合来看，AI 分析完全错误。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/pallets/flask/issues/5816",
+    "issue_number": 5816,
+    "title": "deprecate `should_ignore_error`",
+    "pr_url": "https://github.com/pallets/flask/pull/5899",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "该功能已在代码库中存在，用户可能未注意到已实现的 deprecation。",
+      "fix_suggestion": "无需修复，该功能已实现。用户应升级到 Flask 3.2 并使用 deprecation 路径。",
+      "affected_files": [],
+      "severity": "low",
+      "confidence": 0.12,
+      "issue_type": "feature",
+      "feature_exists": true,
+      "existing_api": "在app和sansio/app中作为参数或属性存在，用于在调试或测试时忽略某些错误，但已被标记为deprecated。"
+    },
+    "scores": {
+      "root_cause_accuracy": 0.333,
+      "file_accuracy": 0.0,
+      "severity_fit": 0.167,
+      "fix_actionability": 0.0,
+      "overall": 0.125,
+      "reasoning": "AI正确识别了根因是deprecate should_ignore_error，与PR完全一致，因此root_cause_accuracy给1.0。但AI未提供受影响文件，实际PR修改了多个文件，file_accuracy为0.0。严重程度设为low，但实际PR是deprecation，属于中等重要，偏低一档，severity_fit给0.5。修复建议称功能已实现且无需修复，实际PR是进行deprecation，方向完全错误，fix_actionability为0.0。综合来看，AI仅在根因上正确，其余维度表现差。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/pallets/flask/issues/5815",
+    "issue_number": 5815,
+    "title": "pass context internally instead of using contextvars",
+    "pr_url": "https://github.com/pallets/flask/pull/5818",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "尽管`AppContext`已合并，但Flask类的内部请求处理方法（如`wsgi_app`、`full_dispatch_request`、`process_response`）仍依赖全局代理隐式获取上下文，未显式传递`AppContext`对象，导致contextvar查找开销和ASGI/Greenlet场景下的性能问题。",
+      "fix_suggestion": "在`Flask`类中新增私有方法（如`_dispatch_request_with_context`），接受`AppContext`参数，并让`wsgi_app`、`full_dispatch_request`等方法改为调用此方法，直接传递已创建的`AppContext`，而不是依赖全局代理。同时为旧公共方法添加废弃警告。",
+      "affected_files": [
+        "src/flask/app.py",
+        "src/flask/ctx.py",
+        "src/flask/cli.py",
+        "src/flask/templating.py",
+        "tests/test_basic.py",
+        "tests/test_async.py"
+      ],
+      "severity": "medium",
+      "confidence": 0.85,
+      "issue_type": "feature",
+      "feature_exists": true,
+      "existing_api": "在 app.py 中，dispatch_request 方法将 ctx 作为 AppContext 参数传递，取代了通过 contextvars 隐式获取上下文的方式。"
+    },
+    "scores": {
+      "root_cause_accuracy": 0.967,
+      "file_accuracy": 0.75,
+      "severity_fit": 0.833,
+      "fix_actionability": 0.783,
+      "overall": 0.833,
+      "reasoning": "AI 正确指出了核心问题（应该传递 AppContext 而非依赖全局代理），但未提及需要保留旧签名并添加废弃警告，修复建议中缺少保留旧签名的细节。文件列表包含多个正确文件（app.py, ctx.py, templating.py），但缺少 CHANGES.rst 和 test_reqctx.py，多余了 cli.py 和 test_basic.py。严重程度 medium 可能略低，因为性能优化虽非紧急但涉及 API 变更，但整体合理。修复建议方向正确，但未提及保留旧签名兼容性，且具体建议与 PR 实现略有差异。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/pallets/flask/issues/5639",
+    "issue_number": 5639,
+    "title": "merge app and request contexts into a single context",
+    "pr_url": "https://github.com/pallets/flask/pull/5812",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "The contexts have been internally merged in Flask 3.2 (AppContext now handles both app-only and request contexts), but the implementation still supports multiple nested pushes of the same context and maintains separate teardown_request/teardown_appcontext mechanisms, signals, and decorators. This complexity stems from retaining backward compatibility with the old two-context design.",
+      "fix_suggestion": "1. Simplify `AppContext.push()` to immediately raise an error if the context is already pushed (remove `_push_count` logic). 2. Merge `do_teardown_request` and `do_teardown_appcontext` into a single `do_teardown_context` method on Flask. 3. Combine `request_tearing_down` and `appcontext_tearing_down` signals into a single `context_tearing_down` signal. 4. Deprecate `teardown_request` and `teardown_appcontext` decorators, replacing with `teardown_context`. 5. Update `AppContext.pop()` to call the unified teardown method. 6. Add deprecation warnings for old names and ensure tests are updated. 7. Update documentation to refer to a single context.",
+      "affected_files": [
+        "src/flask/ctx.py",
+        "src/flask/app.py",
+        "src/flask/globals.py",
+        "src/flask/signals.py",
+        "src/flask/sansio/scaffold.py",
+        "src/flask/sansio/app.py",
+        "src/flask/cli.py",
+        "src/flask/templating.py",
+        "src/flask/testing.py",
+        "tests/test_basic.py",
+        "tests/test_appctx.py",
+        "tests/test_reqctx.py",
+        "tests/test_blueprints.py"
+      ],
+      "severity": "high",
+      "confidence": 0.85,
+      "issue_type": "feature",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 0.667,
+      "file_accuracy": 0.2,
+      "severity_fit": 0.5,
+      "fix_actionability": 0.4,
+      "overall": 0.45,
+      "reasoning": "AI 正确识别出上下文合并这一根因，但过度强调内部复杂性如多层推送等细节，与实际 PR 简化行为（如已推送则不重用）一致但不完全精确。文件命中率极低，AI 列出了大量源文件，但 PR 主要修改文档和变更记录，仅少量代码改动，可能是大重构的一部分但评估时基于给定PR。严重程度 high 偏高，因为 PR 是重构而非紧急修复。修复建议方向正确（简化推送、统一清理等），但具体操作如合并信号未在PR中体现，部分建议更激进。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/pallets/flask/issues/5621",
+    "issue_number": 5621,
+    "title": "Rotating secret keys",
+    "pr_url": "https://github.com/pallets/flask/pull/5632",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "该功能实际上已经在Flask中实现，用户请求的功能已存在。用户可能使用的是旧版本Flask（<3.0）或者未注意到`SECRET_KEY_FALLBACKS`配置。",
+      "fix_suggestion": "该功能已在Flask 3.0+中实现。用户应升级到最新版本，并在配置中使用`SECRET_KEY_FALLBACKS`来存储旧密钥，同时保持`SECRET_KEY`为当前密钥。无需代码修改。",
+      "affected_files": [
+        "src/flask/sessions.py",
+        "src/flask/app.py",
+        "tests/test_basic.py"
+      ],
+      "severity": "low",
+      "confidence": 0.8,
+      "issue_type": "feature",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 0.333,
+      "file_accuracy": 0.5,
+      "severity_fit": 0.5,
+      "fix_actionability": 0.5,
+      "overall": 0.417,
+      "reasoning": "AI将根因归为功能已存在且用户需升级，但Issue实际上是请求新功能，PR实现了SECRET_KEY_FALLBACKS。AI的非修改建议与PR的代码实现方向不符，但提到了类似的配置项。文件覆盖部分正确，但AI漏掉了CHANGES.rst和docs/config.rst等文档和配置文件的修改。严重程度设为low，但功能请求添加新特性为中等到低，尚可接受。修复建议为升级到最新版本，而PR明确通过代码实现了新配置，方向接近但未准确指向代码更改。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/pallets/flask/issues/5258",
+    "issue_number": 5258,
+    "title": "TypeError: Flask.url_for() got multiple values for argument 'self'",
+    "pr_url": "https://github.com/pallets/flask/pull/5264",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "helpers.py 的 url_for 函数未过滤 'self' 关键字，导致其作为关键字参数传递给 Flask.url_for，与 positional-only 的 self 参数冲突。",
+      "fix_suggestion": "在 helpers.py 的 url_for 函数中，在调用 current_app.url_for 之前，从 **values 中移除 'self' 关键字，将其作为普通查询参数。",
+      "affected_files": [
+        "flask/helpers.py"
+      ],
+      "severity": "medium",
+      "confidence": 0.85,
+      "issue_type": "bug",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 0.5,
+      "file_accuracy": 0.0,
+      "severity_fit": 0.667,
+      "fix_actionability": 0.333,
+      "overall": 0.283,
+      "reasoning": "AI 指出根因是未过滤 'self' 关键字，但实际修复是在 url_for 方法中添加 '/' 使其变为 positional-only 参数，而非从 values 中移除。AI 列出的受影响文件 (flask/helpers.py) 与实际修改的文件 (src/flask/app.py, CHANGES.rst, tests) 完全无关。严重程度 medium 偏高，实际是简单特性添加。修复建议方向错误，未建议添加 '/'。综合评分较低。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/pallets/flask/issues/5230",
+    "issue_number": 5230,
+    "title": "deprecate `__version__`",
+    "pr_url": "https://github.com/pallets/flask/pull/5242",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "Flask 的 `__init__.py` 未定义 `__version__`，也未提供带弃用警告的兼容访问路径。用户直接访问 `flask.__version__` 会引发 `AttributeError`，而非获得版本或弃用指引。",
+      "fix_suggestion": "在 `src/flask/__init__.py` 末尾添加模块级 `__getattr__` 函数，当请求 `__version__` 时发出 `DeprecationWarning`，建议使用 `importlib.metadata.version('flask')`，并返回版本字符串。参考 Jinja2 的实现模式。",
+      "affected_files": [
+        "src/flask/__init__.py",
+        "tests/test_basic.py"
+      ],
+      "severity": "low",
+      "confidence": 0.85,
+      "issue_type": "feature",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 0.167,
+      "file_accuracy": 0.5,
+      "severity_fit": 1.0,
+      "fix_actionability": 0.333,
+      "overall": 0.35,
+      "reasoning": "AI 根因分析错误，实际上 issue 要求弃用 __version__ 属性而非处理 AttributeError；PR 在 flask/__init__.py 中添加了 __getattr__ 并修改了 pyproject.toml 和 CHANGES.rst，而 AI 只提到了两个文件且未包含 pyproject.toml；严重程度 low 合理；修复建议虽提到 __getattr__ 但错误地聚焦于引发 AttributeError，与 PR 方向不一致。",
+      "judge_runs": 3
+    }
+  }
+]

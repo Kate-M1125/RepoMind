@@ -1,0 +1,175 @@
+[
+  {
+    "issue_url": "https://github.com/psf/black/issues/5164",
+    "issue_number": 5164,
+    "title": "Unexpected version warning",
+    "pr_url": "https://github.com/psf/black/pull/5167",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "In `src/black/__init__.py`, function `_target_versions_exceed_runtime` initially used `max(target_versions)` which checks if any target version is greater than the runtime, but the intended logic is to check if ALL target versions are greater (i.e., the minimum target version is greater). This causes a false positive warning when a mix of older and newer target versions are specified.",
+      "fix_suggestion": "Change `max(target_versions)` to `min(target_versions)` in the `_target_versions_exceed_runtime` function. Update the docstring to clarify the logic if needed.",
+      "affected_files": [
+        "src/black/__init__.py"
+      ],
+      "severity": "medium",
+      "confidence": 1.0,
+      "issue_type": "bug",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 1.0,
+      "file_accuracy": 0.833,
+      "severity_fit": 1.0,
+      "fix_actionability": 1.0,
+      "overall": 0.967,
+      "reasoning": "AI准确指出了根因：将max改为min，与PR实际修改完全一致。受影响文件正确识别了src/black/__init__.py，PR还修改了CHANGES.md和测试文件，但核心文件已覆盖。严重程度medium合理，因为该bug导致错误警告但不影响功能。修复建议直接建议将max改为min，与PR方向一致，可操作性强。综合评分1.0。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/psf/black/issues/2492",
+    "issue_number": 2492,
+    "title": "Document PyInstaller binaries",
+    "pr_url": "https://github.com/psf/black/pull/5162",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "当前文档对PyInstaller二进制文件的说明过于简略，仅一句话提及，缺乏详细的使用说明、验证方法和平台支持信息，用户难以找到和信任使用。",
+      "fix_suggestion": "在docs/usage_and_configuration/下新增black_pyinstaller_binaries.md，参考black_docker_image.md的格式，包含下载链接、验证方法（GPG签名）、支持平台（Windows/Mac/Linux）、使用示例。在docs/usage_and_configuration/index.md的toctree中添加该页面。在README.md和docs/getting_started.md中，将现有的PyInstaller句子改为指向新页面的链接。",
+      "affected_files": [
+        "docs/usage_and_configuration/black_pyinstaller_binaries.md",
+        "docs/usage_and_configuration/index.md",
+        "README.md",
+        "docs/getting_started.md"
+      ],
+      "severity": "low",
+      "confidence": 0.92,
+      "issue_type": "feature",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 0.5,
+      "file_accuracy": 0.5,
+      "severity_fit": 0.833,
+      "fix_actionability": 0.5,
+      "overall": 0.5,
+      "reasoning": "AI识别出需要记录PyInstaller二进制文件是正确的，但根因分析过于复杂（提到详细使用说明等），实际PR只是简单地添加了下载链接和简短说明。AI建议新文件和多处修改，但PR只修改了README.md和getting_started.md，添加了类似内容。严重程度low合理。修复建议方向对但过于具体（新文件、GPG签名等），实际PR更简洁，故各项评分均为0.5。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/psf/black/issues/3667",
+    "issue_number": 3667,
+    "title": "Excessive additional whitespace when using \"\"\" \"\"\" to document functions and tab indentation",
+    "pr_url": "https://github.com/psf/black/pull/5148",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "Leading tabs in docstring content are not expanded to spaces, causing inconsistent indentation.",
+      "fix_suggestion": "Use expandtabs() to convert tabs to spaces before processing docstring lines.",
+      "affected_files": [
+        "src/docstring_formatter.py"
+      ],
+      "severity": "medium",
+      "confidence": 0.85,
+      "issue_type": "bug",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 0.833,
+      "file_accuracy": 0.0,
+      "severity_fit": 0.833,
+      "fix_actionability": 0.667,
+      "overall": 0.5,
+      "reasoning": "AI根因指出'Leading tabs in docstring content are not expanded to spaces'，但实际PR修复的是'leading tabs in docstrings'的替换宽度从8空格改为4空格，并调整了相关逻辑，方向正确但不够精确。AI指出的文件src/docstring_formatter.py不存在，实际修改文件为src/black/strings.py等，文件识别完全错误。严重程度medium与实际匹配，因为这是一个中等程度的格式化bug。修复建议'Use expandtabs()'方向正确，但PR实际在lines_with_leading_tabs_expanded函数中调整了展开宽度为4，而非简单使用expandtabs，细节有偏差。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/psf/black/issues/5112",
+    "issue_number": 5112,
+    "title": "`# fmt: skip` regression",
+    "pr_url": "https://github.com/psf/black/pull/5117",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "在 src/black/linegen.py 的 normalize_invisible_parens 函数中，只检测了 # fmt: off 指令就提前返回，但没有检测 # fmt: skip 指令。这导致当 class 定义等语句的括号跨行且行尾有 # fmt: skip 时，函数仍然尝试压缩括号使其变为单行，忽略了 # fmt: skip 的存在。",
+      "fix_suggestion": "在 normalize_invisible_parens 函数中增加对 # fmt: skip 的检测。可以获取当前节点的行号，然后检查该行是否包含 # fmt: skip 指令。如果是，则直接返回，不执行括号不可见化操作。或者利用 Line 对象的 inside_fmt_skip_block 属性来判断。具体实现：在函数开头，除了已有的 FMT_OFF 检查，再添加一个对 node.prefix 或 node 所在原始行是否有 FMT_SKIP 的检查。如果存在，则 return。",
+      "affected_files": [
+        "src/black/linegen.py",
+        "src/black/comments.py"
+      ],
+      "severity": "high",
+      "confidence": 0.95,
+      "issue_type": "bug",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 0.333,
+      "file_accuracy": 0.5,
+      "severity_fit": 0.5,
+      "fix_actionability": 0.167,
+      "overall": 0.3,
+      "reasoning": "AI指出问题与# fmt: skip相关，方向正确，但实际修复主要在comments.py中修改生成忽略节点的逻辑，而非linegen.py中的normalize_invisible_parens。AI预测的文件有重叠（comments.py），但也包括未修改的linegen.py。严重程度略高，因为该问题影响特定用例。修复建议虽然提到检测# fmt: skip，但未涉及复杂的父节点判断（suite节点），因此不够精确。整体上AI分析部分正确但细节偏差。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/psf/black/issues/3616",
+    "issue_number": 3616,
+    "title": "(🐞) blackd bad f-string fragment causes 500 response",
+    "pr_url": "https://github.com/psf/black/pull/5080",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "src/blackd/__init__.py:199 (handle function) - Missing catch for SyntaxError (and subclasses) raised by format_str when parsing invalid f-strings like 'f\"{}\"'. Only InvalidInput and SourceASTParseError are caught for 400, but SyntaxError falls to generic Exception handler returning 500.",
+      "fix_suggestion": "Add an except clause for SyntaxError (and optionally IndentationError, TabError which are subclasses) in the handle function of src/blackd/__init__.py, returning status 400 with the error message, similar to existing InvalidInput handling.",
+      "affected_files": [
+        "src/blackd/__init__.py"
+      ],
+      "severity": "medium",
+      "confidence": 0.95,
+      "issue_type": "bug",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 0.667,
+      "file_accuracy": 0.833,
+      "severity_fit": 1.0,
+      "fix_actionability": 0.667,
+      "overall": 0.75,
+      "reasoning": "AI correctly identified that blackd's handle function should catch a parse error (SyntaxError) to return 400 instead of 500, and the main affected file is src/blackd/__init__.py. However, the actual fix introduced a new exception class SourceASTParseError rather than directly catching SyntaxError, and also modified parsing.py and other files to separate source parse errors from internal safety errors. The AI's root cause is directionally accurate but oversimplified, and the fix suggestion is actionable but not exactly matching the implementation.",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/psf/black/issues/4730",
+    "issue_number": 4730,
+    "title": "`# fmt: skip` ignored inside multi-part if-clause",
+    "pr_url": "https://github.com/psf/black/pull/4903",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "`# fmt: skip` 注释在多部分 if 子句中的比较表达式行被忽略，因为 linegen.py 中的运算符拆分逻辑未检查该行是否被标记为跳过。",
+      "fix_suggestion": "在 linegen.py 中处理比较运算符（特别是 `in`）拆分时，先检查当前逻辑行是否因 `# fmt: skip` 而被忽略。如果被标记，则跳过拆分操作并保持节点原样。具体实现：在拆分比较表达式的函数（如 `visit_compare_expr` 或类似函数）中，检查 `self.current_line.is_fmt_skip` 属性，如果为真则直接返回。",
+      "affected_files": [
+        "src/black/linegen.py",
+        "src/black/comments.py"
+      ],
+      "severity": "high",
+      "confidence": 0.85,
+      "issue_type": "bug",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 0.5,
+      "file_accuracy": 0.433,
+      "severity_fit": 0.833,
+      "fix_actionability": 0.333,
+      "overall": 0.45,
+      "reasoning": "根因方面，AI指出`# fmt: skip`被忽略是因为运算符拆分逻辑未检查跳过标记，但实际PR还涉及更广泛的注释处理逻辑，所以部分正确但不够精确。文件层面，AI提到linegen.py和comments.py，但PR仅修改了comments.py，未改动linegen.py，因此重叠度低。严重程度评为high合理，因为该bug影响代码格式化控制，但PR并非紧急修复。修复建议方向大致正确（检查fmt skip），但PR实际通过修改注释处理来实现在嵌套表达式中传递跳过信息，而非单纯在运算符拆分处检查，因此actionability较低。",
+      "judge_runs": 3
+    }
+  }
+]

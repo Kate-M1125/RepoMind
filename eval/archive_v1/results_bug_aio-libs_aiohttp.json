@@ -1,0 +1,224 @@
+[
+  {
+    "issue_url": "https://github.com/aio-libs/aiohttp/issues/7342",
+    "issue_number": 7342,
+    "title": "aiohttp does not try connecting to multiple IPs if first connect times out",
+    "pr_url": "https://github.com/aio-libs/aiohttp/pull/7368",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "aiohttp/connector.py 第 1480 行的 except 子句仅捕获 ClientConnectorError 和 asyncio.TimeoutError，但连接超时可能抛出 ServerTimeoutError（继承自 ServerConnectionError，而非 ClientConnectorError），导致循环无法继续尝试其他 IP。此外，默认的超时配置（仅设置 total）可能导致 CancelledError，该异常也不被捕获。",
+      "fix_suggestion": "1. 在 aiohttp/connector.py 第 1480 行，将 except (ClientConnectorError, asyncio.TimeoutError) 改为 except (ClientConnectionError, asyncio.TimeoutError)，以捕获所有连接相关错误，包括 ServerTimeoutError。2. (可选) 考虑同时捕获 asyncio.CancelledError，或确保默认超时设置 sock_connect 以避免 CancelledError 被抛出。3. 添加单元测试验证当第一个 IP 超时时，会继续尝试第二个 IP。",
+      "affected_files": [
+        "aiohttp/connector.py",
+        "aiohttp/client_exceptions.py"
+      ],
+      "severity": "high",
+      "confidence": 0.85,
+      "issue_type": "bug",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 0.333,
+      "file_accuracy": 0.5,
+      "severity_fit": 0.833,
+      "fix_actionability": 0.333,
+      "overall": 0.425,
+      "reasoning": "AI 分析的根因（ServerTimeoutError 未被捕获）与真实修复不符：真实修复是将 except ClientConnectorError 改为 except (ClientConnectorError, asyncio.TimeoutError)，并添加 sock_connect 超时默认值，而非修改异常类型。文件覆盖率仅 50%，AI 多列了 client_exceptions.py，且实际修复还涉及 client.py 等文件。严重程度 high 略高（PR 属于增强默认行为），但方向可接受。修复建议方向部分正确（尽管具体异常建议有误），但额外建议 sock_connect 超时是合理的。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/aio-libs/aiohttp/issues/12795",
+    "issue_number": 12795,
+    "title": "Connection Pool Poisoning",
+    "pr_url": "https://github.com/aio-libs/aiohttp/pull/12798",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "在aiohttp 3.14.0中，aiohttp/client_proto.py的data_received方法中的异常处理从句从`except BaseException as underlying_exc`（3.13.5及之前）更改为`except Exception as underlying_exc`。由于asyncio.CancelledError在Python 3.8+中是BaseException而非Exception，当请求超时或协程取消导致CancelledError在解析数据时抛出时，异常不再被捕获，`self.transport.close()`不会执行，使得连接保持开放但在残缺/不同步的状态。随后该连接被释放回keep-alive池，后续请求获取该连接后立即失败（~2ms），而配置的sock_read超时为3s。",
+      "fix_suggestion": "将aiohttp/client_proto.py第328行的异常处理从句改回`except BaseException as underlying_exc:`以捕获CancelledError和其他BaseException，确保在解析过程中出现任何异常时传输层都会被关闭。或者，如果用户不想捕获所有BaseException，可以显式添加对CancelledError的处理。最简单的修复方式是恢复为3.13.5的行为。",
+      "affected_files": [
+        "aiohttp/client_proto.py"
+      ],
+      "severity": "critical",
+      "confidence": 0.95,
+      "issue_type": "bug",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 0.967,
+      "file_accuracy": 1.0,
+      "severity_fit": 1.0,
+      "fix_actionability": 0.967,
+      "overall": 0.977,
+      "reasoning": "AI正确指出了根因是异常处理从句从BaseException改为Exception导致CancelledError未被捕获，PR验证了这一修改并将'except Exception'改回'except BaseException'。AI列出的受影响文件client_proto.py与PR修改完全一致。严重程度critical合理，因为这是一个关键回归bug导致连接池中毒。修复建议明确建议改回except BaseException，与PR完全一致。综合评分高，但略微扣分因为PR还涉及添加测试文件和news条目。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/aio-libs/aiohttp/issues/11988",
+    "issue_number": 11988,
+    "title": "Allow `dumps: JSONEncoder` callable to directly return `bytes`",
+    "pr_url": "https://github.com/aio-libs/aiohttp/pull/11989",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "`JSONEncoder` 类型定义为 `Callable[[Any], str]`，且 `JsonPayload.__init__` 中无条件调用 `.encode(encoding)`，不允许 `dumps` 返回 bytes。",
+      "fix_suggestion": "1. 在 `typedefs.py` 中将 `JSONEncoder` 类型改为 `Callable[[Any], str | bytes]`。2. 在 `payload.py` 的 `JsonPayload.__init__` 中，调用 `dumps(value)` 后判断返回值类型，若为 `bytes` 则直接使用，否则调用 `.encode(encoding)`。3. 在 `client.py` 的 `_request` 方法中，可以保留对 `json_serialize_bytes` 的兼容，但建议内部统一使用 `JsonPayload`（已修改为支持 bytes）。",
+      "affected_files": [
+        "aiohttp/typedefs.py",
+        "aiohttp/payload.py",
+        "aiohttp/client.py"
+      ],
+      "severity": "low",
+      "confidence": 0.9,
+      "issue_type": "feature",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 0.5,
+      "file_accuracy": 0.433,
+      "severity_fit": 1.0,
+      "fix_actionability": 0.433,
+      "overall": 0.483,
+      "reasoning": "AI 正确识别了核心需求（允许 dumps 返回 bytes），但根因分析不够精确：实际 PR 并未修改 typedefs 中的 JSONEncoder 类型，而是新增了 JSONBytesEncoder 类型，并添加了新的 JsonBytesPayload、send_json_bytes 等方法，保持了向后兼容性，而非直接修改原有类型。AI 列出的受影响文件只有 3 个，但实际 PR 修改了 10 个文件，覆盖不全。严重程度 low 合理。修复建议的方向正确（支持 bytes），但具体建议（修改 JSONEncoder 类型定义和 JsonPayload）与实际 PR 不同，实际做法是引入新的类型和函数，而非修改现有接口。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/aio-libs/aiohttp/issues/12617",
+    "issue_number": 12617,
+    "title": "Granular `CLAUDE.md` shape",
+    "pr_url": "https://github.com/aio-libs/aiohttp/pull/12618",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "CLAUDE.md currently only references external context files (via @ directives) and does not contain inline descriptions of aiohttp's module structure, making it hard for AI agents to quickly understand the repository layout.",
+      "fix_suggestion": "Rewrite aiohttp/CLAUDE.md to include a granular description of the repository's main modules, similar to yarl's AGENTS.md table. Include a table mapping each module (e.g., client.py, web_request.py, connector.py) to its purpose, key classes, and usage patterns. Keep the existing @ references for shared context.",
+      "affected_files": [
+        "aiohttp/CLAUDE.md"
+      ],
+      "severity": "low",
+      "confidence": 0.85,
+      "issue_type": "question",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 0.0,
+      "file_accuracy": 0.0,
+      "severity_fit": 0.5,
+      "fix_actionability": 0.0,
+      "overall": 0.117,
+      "reasoning": "AI认为root cause是CLAUDE.md缺少内联模块描述，但实际PR是将CLAUDE.md重构为分层上下文导入，与内联描述无关。AI指出的受影响文件aiohttp/CLAUDE.md不存在，实际修改的是根目录CLAUDE.md及其他文件。严重程度low虽然合理，但修复建议（添加模块表格）与PR完全不一致，因此各维度得分低。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/aio-libs/aiohttp/issues/9308",
+    "issue_number": 9308,
+    "title": "Calling BaseRequest.host can do blocking I/O if the host header is missing",
+    "pr_url": "https://github.com/aio-libs/aiohttp/pull/12597",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "Already fixed. The original bug was in `aiohttp/web_request.py` where the `host` property fell back to `socket.getfqdn()` when the Host header was missing, causing blocking DNS resolution on the event loop. The fix replaced that fallback with `_transport_sockname`, which is the local socket address the request arrived on.",
+      "fix_suggestion": "No fix needed. The bug is already resolved in the current codebase.",
+      "affected_files": [],
+      "severity": "medium",
+      "confidence": 0.8,
+      "issue_type": "bug",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 1.0,
+      "file_accuracy": 0.167,
+      "severity_fit": 0.667,
+      "fix_actionability": 0.333,
+      "overall": 0.567,
+      "reasoning": "根因完全正确，AI准确指出了阻塞I/O问题，所以得1.0。但AI未提供受影响文件列表，只得0.0。严重程度为medium，但实际修复修改了多个文件且涉及breaking change，可能应为high或medium，但考虑到阻塞可能影响性能而非安全性，medium合理，但PR特别提及可远程触发且影响重大，故扣0.5。修复建议是'已修复，无需操作'，而实际PR有大量改动，方向完全相反，因此得0.0。综合评估较低。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/aio-libs/aiohttp/issues/11293",
+    "issue_number": 11293,
+    "title": "`test_aiohttp_request_ctx_manager_not_found` fails intermittently",
+    "pr_url": "https://github.com/aio-libs/aiohttp/pull/12416",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "测试依赖于外部 DNS 解析对错误域名抛出 `ClientConnectionError`，但实际中 `DefaultResolver.resolve` 在某些情况下（如 `socket.gaierror` 非 `EAI_NONAME`、系统级错误等）可能抛出非 `ClientConnectionError` 的异常（如 `OSError` 或 `InvalidUrlClientError`），导致 `pytest.raises` 不匹配，进而执行 `assert False`。",
+      "fix_suggestion": "修改测试 `test_aiohttp_request_ctx_manager_not_found`，将 `pytest.raises(aiohttp.ClientConnectionError)` 改为 `pytest.raises((aiohttp.ClientConnectionError, OSError))` 以捕获所有可能的 DNS 解析异常，或更稳妥地使用 mock 模拟 DNS 失败（如 `test_raising_client_connector_dns_error_on_dns_failure` 的做法）。",
+      "affected_files": [
+        "aiohttp/resolver.py",
+        "tests/test_client_functional.py"
+      ],
+      "severity": "medium",
+      "confidence": 0.85,
+      "issue_type": "bug",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 0.0,
+      "file_accuracy": 0.667,
+      "severity_fit": 0.5,
+      "fix_actionability": 0.0,
+      "overall": 0.158,
+      "reasoning": "AI 错误地将根因归为异常类型不匹配，而实际 PR 修复的是测试中使用的域名，改为 .invalid 顶级域名以确保 DNS 解析失败。文件预测正确，因为唯一修改的文件是 tests/test_client_functional.py。严重程度 medium 基本合理，但修复方向完全错误，AI 建议修改 pytest.raises 或使用 mock，而实际只是更改了 URL。因此整体评分较低。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/aio-libs/aiohttp/issues/11681",
+    "issue_number": 11681,
+    "title": "Accepting async context managers for cleanup contexts",
+    "pr_url": "https://github.com/aio-libs/aiohttp/pull/11704",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "无——功能已存在。",
+      "fix_suggestion": "无需修复。向用户说明现有用法：注册异步上下文管理器或异步生成器到`app.cleanup_ctx`即可。",
+      "affected_files": [],
+      "severity": "low",
+      "confidence": 0.9,
+      "issue_type": "feature",
+      "feature_exists": true,
+      "existing_api": "通过`app.cleanup_ctx.append`注册异步上下文管理器，在启动和清理时自动管理资源生命周期，支持`async with`语法"
+    },
+    "scores": {
+      "root_cause_accuracy": 0.0,
+      "file_accuracy": 0.0,
+      "severity_fit": 0.0,
+      "fix_actionability": 0.0,
+      "overall": 0.0,
+      "reasoning": "AI 完全错误地认为功能已存在且无需修复，但实际上 PR 确实新增了对异步上下文管理器的支持，并修改了多个文件。根因分析完全错误，受影响文件未列出，严重程度评估不合理（应更高），修复建议与事实相反。因此所有维度均为0分。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/aio-libs/aiohttp/issues/12011",
+    "issue_number": 12011,
+    "title": "Unsafe Adhoc Cookies Passed To request()",
+    "pr_url": "https://github.com/aio-libs/aiohttp/pull/12274",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "当前代码 (aiohttp/client.py:635) 在创建临时 CookieJar 时已复制了会话 CookieJar 的 unsafe 设置，因此用户可以通过设置会话 CookieJar(unsafe=True) 来允许 ad-hoc cookies 发送给 IP 主机。无需新增 cookies_unsafe 参数。",
+      "fix_suggestion": "无需修复。当前代码已通过继承会话 CookieJar 的 unsafe 属性解决了问题。如果需要支持 per-request 级别的 unsafe 控制，可以考虑新增 cookies_unsafe 参数，但根据 issue 评论中维护者的意见，他们倾向于通过复制会话设置的方式解决。",
+      "affected_files": [],
+      "severity": "low",
+      "confidence": 0.85,
+      "issue_type": "bug",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 0.5,
+      "file_accuracy": 0.333,
+      "severity_fit": 0.333,
+      "fix_actionability": 0.5,
+      "overall": 0.383,
+      "reasoning": "AI 准确指出了根因：会话 CookieJar 的 unsafe 设置未复制到 ad-hoc 请求的临时 CookieJar，与 PR 完全一致。文件方面，AI 虽未列出具体文件，但问题涉及的文件（client.py、cookiejar.py）均被 PR 修改，PR 还额外修改了 abc.py、tests 等，但核心文件已覆盖。严重程度低可能略低，因为该 bug 导致功能回归，但维护者未将其视为紧急，故 0.5 合理。修复建议强调通过复制会话设置解决问题，与 PR 方向一致。综合来看，AI 分析非常准确，仅严重程度稍有偏差。",
+      "judge_runs": 3
+    }
+  }
+]

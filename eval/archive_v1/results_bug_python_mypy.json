@@ -1,0 +1,166 @@
+[
+  {
+    "issue_url": "https://github.com/python/mypy/issues/15023",
+    "issue_number": 15023,
+    "title": "[stubtest] Type re-export creates duplicated error with invalid line number",
+    "pr_url": "https://github.com/python/mypy/pull/20417",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "在mypy/stubtest.py中，verify_mypyfile函数（L349）只对模块顶层的re-exported名字进行跳过（L479-483），但并未阻止对其内部成员的递归检查。当Tag类被re-export时，Tag类本身被跳过，但Tag类的成员（如decode方法）在verify_typeinfo（L476）中被递归检查，导致重复错误。此外，Error.get_description（L160-165）使用stub_object.line作为stub行号，该行号是原始定义节点的行号（来自原模块），而不是re-export语句的行号，导致行号错误。",
+      "fix_suggestion": "1. 在verify_mypyfile的跳过逻辑（L479-483）中，当entry被跳过时，递归地跳过该entry的所有子节点（特别是TypeInfo的成员）。可以通过在跳过时记录一个集合，然后在verify_typeinfo中检查类是否在此集合中。2. 或者，修改verify_typeinfo，接收一个额外的参数skip_types（跳过检查的类型列表），并在verify_mypyfile调用verify时传递这个列表。3. 修改Error.get_description，当stub_object属于re-export时，尝试从当前模块的SymbolTable中查找import语句的行号。具体做法：在Error中存储stub_module_name，然后在get_description中使用get_stub(stub_module_name)获取模块，查找object_path[1]（类名）的SymbolTableNode，并使用其line属性作为stub_line。",
+      "affected_files": [
+        "mypy/stubtest.py"
+      ],
+      "severity": "medium",
+      "confidence": 0.85,
+      "issue_type": "bug",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 0.4,
+      "file_accuracy": 0.833,
+      "severity_fit": 0.833,
+      "fix_actionability": 0.133,
+      "overall": 0.467,
+      "reasoning": "AI指出的根因（递归检查re-export类型成员）方向正确，但实际PR通过检查cross_ref判断模块归属来跳过，而非AI建议的递归跳过或记录集合，存在偏差。受影响文件完全匹配mypy/stubtest.py，PR还修改了测试文件但AI未提及，但关键文件已覆盖。严重程度medium合理。修复建议与实际PR不一致，PR采用检查cross_ref和原模块名的方式，而AI建议的递归跳过或修改Error行号未被采用。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/python/mypy/issues/16736",
+    "issue_number": 16736,
+    "title": "match: Incorrect \"Incompatible types in capture pattern\" when type has already been narrowed",
+    "pr_url": "https://github.com/python/mypy/pull/21405",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "In mypy/checker.py, visit_match_stmt line 5977: pattern_types = [self.pattern_checker.accept(p, subject_type) for p in s.patterns] uses the original subject_type for all patterns in the first pass, ignoring narrowing from previous case clauses. This causes capture variables to be inferred with the full union type rather than the narrowed type.",
+      "fix_suggestion": "In visit_match_stmt (mypy/checker.py), modify the first pass (line 5977) to narrow the subject type progressively through patterns, similar to how the second pass does it. Track a current_subject_type that gets updated to the rest_type of each matched pattern, so that subsequent capture patterns see the narrowed type.",
+      "affected_files": [
+        "mypy/checker.py"
+      ],
+      "severity": "medium",
+      "confidence": 0.9,
+      "issue_type": "bug",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 0.867,
+      "file_accuracy": 0.833,
+      "severity_fit": 0.767,
+      "fix_actionability": 0.6,
+      "overall": 0.767,
+      "reasoning": "AI 指出的根因（ignore narrowing from previous case clauses）方向正确，但 PR 实际修复涉及更具体的方法（check_and_remove_capture_conflicts 等），而 AI 建议的动态缩小类型方法未在 PR 中出现。文件 accuracy 满分，因为 AI 只列了 checker.py，PR 确实修改了该文件。Severity medium 合理，因为该 bug 影响正确性但非安全或崩溃。Fix 建议的方向（修改 visit_match_stmt 处理 narrowing）与实际 PR 一致，但细节有偏差，因此各维度给 0.8 分，综合 0.85。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/python/mypy/issues/19389",
+    "issue_number": 19389,
+    "title": "Packaging: license declaration uses outdated format to-be removed Feb. 18, 2026",
+    "pr_url": "https://github.com/python/mypy/pull/21020",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "无缺口。mypy主仓库的pyproject.toml已使用现代license声明格式，classifiers中不包含License分类器。警告可能来自mypyc-wheels或librt等其他相关仓库。",
+      "fix_suggestion": "无需修改。若确认警告来自其他仓库（如mypyc-wheels），需在对应仓库中修改pyproject.toml：将`license = {text = \"MIT\"}`改为`license = \"MIT\"`，并移除classifiers中的`\"License :: OSI Approved :: MIT License\"`。",
+      "affected_files": [],
+      "severity": "low",
+      "confidence": 0.4,
+      "issue_type": "feature",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 0.0,
+      "file_accuracy": 0.0,
+      "severity_fit": 0.333,
+      "fix_actionability": 0.0,
+      "overall": 0.075,
+      "reasoning": "AI分析完全错误：根因误判为无需修改或来自其他仓库，而实际PR修改了mypy主仓库的pyproject.toml等文件以更新setuptools版本；受影响文件未提供，与PR修改的3个文件无重叠；严重程度应为中等，AI评为low不合实际；修复建议方向错误（建议修改license声明），实际PR只是升级setuptools版本。所有维度得分为0。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/python/mypy/issues/14309",
+    "issue_number": 14309,
+    "title": "[possibly-undefined] False-positive with nested try block and finally",
+    "pr_url": "https://github.com/python/mypy/pull/20276",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "解析失败，请人工查看原始 Issue",
+      "fix_suggestion": "LLM 输出格式异常，建议重试",
+      "affected_files": [],
+      "severity": "medium",
+      "confidence": 0.1,
+      "issue_type": "bug",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 0.0,
+      "file_accuracy": 0.0,
+      "severity_fit": 0.5,
+      "fix_actionability": 0.0,
+      "overall": 0.075,
+      "reasoning": "AI分析结果实质是解析失败（输出格式异常），未提供根因、文件或修复建议。根因完全错误，文件无重叠，严重程度（medium）对于此false-positive bug较合理（0.5分），但修复建议完全缺失。整体评分极低。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/python/mypy/issues/20919",
+    "issue_number": 20919,
+    "title": "stubtest crashes with `TypeError` when runtime value is a proxy object that    overrides `__class__`",
+    "pr_url": "https://github.com/python/mypy/pull/20926",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "在stubtest.py的get_mypy_type_of_runtime_value函数中，代理对象覆盖__class__属性后，type(runtime) != runtime.__class__检查可能被绕过(当__class__返回代理类自身时)，且后续isinstance(runtime, (bool, int, str))会因代理对象实现__bool__等方法而返回True，导致代理对象被误当作字面量值传入LiteralType，但type(runtime)实际是代理类而非LiteralValue联合类型，从而在mypyc编译的LiteralType.__init__中触发类型断言失败(TypeError)。",
+      "fix_suggestion": "在get_mypy_type_of_runtime_value函数中，在创建LiteralType之前增加一层防御检查：当type(runtime) not in (bool, int, str, float, bytes)时(且runtime不是enum枚举实例)，不应创建LiteralType，直接返回fallback。这将确保只有真正的内置类型值才会被构造成LiteralType，代理对象即使通过isinstance伪装也会被拦截。同时保留原有的type(runtime) != runtime.__class__检查作为第一道防线。",
+      "affected_files": [
+        "mypy/stubtest.py"
+      ],
+      "severity": "high",
+      "confidence": 0.85,
+      "issue_type": "bug",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 0.767,
+      "file_accuracy": 0.833,
+      "severity_fit": 1.0,
+      "fix_actionability": 0.733,
+      "overall": 0.783,
+      "reasoning": "根因分析正确指出代理对象覆盖__class__导致isinstance误判，与PR修复一致，但AI建议用type(runtime) not in (bool, int, str, float, bytes)作为防御，而PR实际只检查type(runtime) != runtime.__class__并直接返回fallback，未涉及类型白名单，因此根因部分匹配度高但修复建议有偏差。文件方面AI只提到stubtest.py，未提及测试文件。严重程度high合理。修复建议方向正确但具体实现与PR不完全一致，略有冗余。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/python/mypy/issues/19981",
+    "issue_number": 19981,
+    "title": "Unreachable false positive in match statement with tuples",
+    "pr_url": "https://github.com/python/mypy/pull/20896",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "In `mypy/checkpattern.py`, the `visit_sequence_pattern` method incorrectly computes the `rest_type` for sequence patterns with empty list subpatterns (`[]`). When matching `_, []` against `tuple[list, list]`, the empty list pattern narrows the second element to `Never` (since an empty list is the only possible match for `[]`), and then the `rest_type` calculation erroneously propagates that `Never` to the first element of the tuple as well. This causes the subject type for subsequent cases to become `tuple[Never, list]`, making the pattern `[], _` appear impossible and triggering a false positive unreachable warning.",
+      "fix_suggestion": "In `mypy/checkpattern.py`, `visit_sequence_pattern` method, fix the `rest_type` calculation when handling empty sequence subpatterns. When computing the rest type after a failed match of a sequence pattern against a tuple type, ensure that elements that were not constrained by the pattern (like the first element in `_, []`) retain their original type rather than being narrowed to `Never` due to an empty list match on another element.",
+      "affected_files": [
+        "mypy/checkpattern.py"
+      ],
+      "severity": "high",
+      "confidence": 0.9,
+      "issue_type": "bug",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 0.767,
+      "file_accuracy": 1.0,
+      "severity_fit": 1.0,
+      "fix_actionability": 0.7,
+      "overall": 0.85,
+      "reasoning": "AI 分析的根因与 PR 实际修复的 bug 完全一致，均指出 `visit_sequence_pattern` 中 `rest_type` 计算错误导致空列表子模式将其他元素错误窄化为 `Never`。受影响文件 `mypy/checkpattern.py` 正是 PR 修改的唯一源文件。严重程度 high 恰当，因为是导致 false positive 的 bug。修复建议强调修正 `rest_type` 计算，与 PR 中修改的 `conditional_types_with_intersection` 逻辑方向一致，具有可操作性。",
+      "judge_runs": 3
+    }
+  }
+]

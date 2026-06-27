@@ -13,7 +13,7 @@ if "--security" in sys.argv:
 
 from workflow.graph import app
 
-issue_url = "https://github.com/fastapi/fastapi/issues/1234"
+issue_url = next((a for a in sys.argv[1:] if not a.startswith("--")), "https://github.com/fastapi/fastapi/issues/1234")
 config = {"configurable": {"thread_id": str(uuid.uuid4())}}
 
 result = app.invoke({

@@ -163,29 +163,50 @@ def retrieve_from_imported_deps(
     if not to_index:
         return ""
 
-    extra_docs: list[str] = []
-    for pkg in to_index:
+    # 解析每个 pkg 对应的 GitHub repo（网络请求，可并行）
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    def _resolve(pkg):
         result = resolve_github_repo(pkg)
         if not result:
-            continue
+            return None
         dep_owner, dep_repo = result
         if dep_owner == owner and dep_repo == repo:
-            continue
+            return None
+        return pkg, dep_owner, dep_repo
 
+    resolved = []
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        for r in as_completed([ex.submit(_resolve, p) for p in to_index]):
+            val = r.result()
+            if val:
+                resolved.append(val)
+
+    if not resolved:
+        return []
+
+    # 并行 clone + index 每个 dep（各 dep 目录独立，无竞争）
+    def _index_and_query(pkg, dep_owner, dep_repo):
         print(f"[DepIndexer] RAG 发现 import {pkg} → 索引 {dep_owner}/{dep_repo}")
         ensure_repo_indexed(dep_owner, dep_repo, _index_deps=False)
-
-        # 对该依赖跑同样的查询
         try:
             col = get_repo_collection(dep_owner, dep_repo)
             if col.count() == 0:
-                continue
-            for q in queries[:2]:  # 只用前两个查询，避免过多 API 调用
+                return []
+            docs = []
+            for q in queries[:2]:
                 res = col.query(query_texts=[q], n_results=2, include=["documents"])
-                docs = (res["documents"] or [[]])[0]
-                extra_docs.extend(docs)
+                docs.extend((res["documents"] or [[]])[0])
+            return docs
         except Exception as e:
             print(f"[DepIndexer] 查询 {dep_owner}/{dep_repo} 失败: {e}")
+            return []
+
+    extra_docs: list[str] = []
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        futures = {ex.submit(_index_and_query, *r): r for r in resolved}
+        for fut in as_completed(futures):
+            extra_docs.extend(fut.result())
 
     seen: set[str] = set()
     return [d for d in extra_docs if not (d in seen or seen.add(d))]
@@ -204,20 +225,30 @@ def index_dependencies(repo_path: str, owner: str, repo: str) -> None:
 
     print(f"[DepIndexer] {owner}/{repo} 解析到 {len(packages)} 个依赖，查找 GitHub 地址...")
 
-    indexed = 0
-    for pkg in packages:
-        if indexed >= MAX_DEPS:
-            break
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    candidates = []
+    for pkg in packages[:MAX_DEPS * 2]:
         result = resolve_github_repo(pkg)
         if not result:
             continue
         dep_owner, dep_repo = result
         if dep_owner == owner and dep_repo == repo:
-            continue  # 跳过自己
+            continue
+        candidates.append((pkg, dep_owner, dep_repo))
+        if len(candidates) >= MAX_DEPS:
+            break
+
+    def _do_index(pkg, dep_owner, dep_repo):
         print(f"[DepIndexer] {pkg} → {dep_owner}/{dep_repo}")
-        success = ensure_repo_indexed(dep_owner, dep_repo, _index_deps=False)
-        if success:
-            indexed += 1
+        return ensure_repo_indexed(dep_owner, dep_repo, _index_deps=False)
+
+    indexed = 0
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        futures = {ex.submit(_do_index, *c): c for c in candidates}
+        for fut in as_completed(futures):
+            if fut.result():
+                indexed += 1
 
     if indexed:
         print(f"[DepIndexer] 完成，共索引 {indexed} 个依赖")

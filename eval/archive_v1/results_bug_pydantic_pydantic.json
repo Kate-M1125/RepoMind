@@ -1,0 +1,229 @@
+[
+  {
+    "issue_url": "https://github.com/pydantic/pydantic/issues/12800",
+    "issue_number": 12800,
+    "title": "Exponential perfomance drop (100k%) for edge cases serialization in `pydantic>=2.11.0b1` (0.044 seconds -> 183.207 seconds)",
+    "pr_url": "https://github.com/pydantic/pydantic/pull/12825",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "在 pydantic-core/src/serializers/type_serializers/union.rs 的 TaggedUnionSerializer::tagged_union_serialize 方法（L309-352）中，当 discriminator 找到匹配的变体但序列化失败（如枚举字段值为字符串而非枚举实例）时，代码没有返回错误，而是 fallthrough 到 L352 的 union_serialize 调用，导致退化为普通联合类型的序列化，遍历所有 union 成员进行尝试，造成 O(N*M) 的指数级性能下降。",
+      "fix_suggestion": "修改 TaggedUnionSerializer::tagged_union_serialize 方法：当 discriminator 找到匹配变体后，如果严格模式和宽松模式都序列化失败，应直接返回错误而不是 fallthrough 到 union_serialize。具体地，在 L327-339 的 match 块中，当 Err 且 retry_with_lax_check 也失败时，应 return Err(err) 而不是继续执行到 L352 的 union_serialize。",
+      "affected_files": [
+        "pydantic-core/src/serializers/type_serializers/union.rs"
+      ],
+      "severity": "critical",
+      "confidence": 0.85,
+      "issue_type": "bug",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 1.0,
+      "file_accuracy": 1.0,
+      "severity_fit": 1.0,
+      "fix_actionability": 1.0,
+      "overall": 1.0,
+      "reasoning": "AI 分析准确指出了根因：当 discriminator 匹配变体后序列化失败时，代码 fallthrough 到普通 union 序列化导致性能下降。受影响文件 union.rs 正是 PR 修改的核心文件，并额外新增测试文件。严重程度 critical 合理，因为性能下降达 100k%。修复建议与 PR 方向完全一致，即不再回退到尝试所有 union 成员。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/pydantic/pydantic/issues/13148",
+    "issue_number": 13148,
+    "title": "Is `warn_untyped_fields` no longer recommended for the Mypy plugin?",
+    "pr_url": "https://github.com/pydantic/pydantic/pull/13149",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "warn_untyped_fields 在 Pydantic v2 的 Mypy 插件中被移除（pydantic/mypy.py 中 PydanticPluginConfig 的 __slots__ 未包含该字段，而仅存在于 V1 的 pydantic/v1/mypy.py 中），但文档中关于“所有插件严格标志”的部分未更新，仍提到该选项（或未明确说明其已移除），导致用户困惑。插件现在会在配置中出现未知键时发出警告。",
+      "fix_suggestion": "1. 更新文档 `docs/integrations/mypy.md`，在“所有插件严格标志”的示例配置中移除 `warn_untyped_fields`，并添加注释说明该选项已在 V2 中移除，不再生效。\n2. 确保插件的未知键警告逻辑已包含（当前正常），但可考虑将警告升级为 mypy 错误（通过 mypy 的 error 机制）以提高可见性。\n3. 添加迁移指南或发布说明，明确指示用户移除该配置项。",
+      "affected_files": [
+        "pydantic/mypy.py",
+        "docs/integrations/mypy.md"
+      ],
+      "severity": "medium",
+      "confidence": 0.85,
+      "issue_type": "question",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 0.867,
+      "file_accuracy": 0.51,
+      "severity_fit": 0.833,
+      "fix_actionability": 0.567,
+      "overall": 0.67,
+      "reasoning": "AI 正确指出了 warn_untyped_fields 在 v2 的 mypy 插件中失效的根本原因，但错误地认为该选项已被移除，实际上插件仍会读取配置并警告未知键。文件名命中 pydantic/mypy.py，但未包含测试新增文件。严重程度 medium 合理。修复建议中提及更新文档和添加警告的方向正确，但缺少添加测试的具体步骤，且建议升级警告为错误过于激进。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/pydantic/pydantic/issues/12718",
+    "issue_number": 12718,
+    "title": "`model_validate_strings()` does not respect custom `__init__()`",
+    "pr_url": "https://github.com/pydantic/pydantic/pull/12897",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "The bug was originally caused by missing as_kwargs() implementation in StringMapping (input_string.rs), which caused the custom_init path in model.rs to be skipped. This has since been fixed by adding the as_kwargs() method that returns the underlying dict for Mapping variant. No active bug remains in the current codebase.",
+      "fix_suggestion": "No fix needed for the current codebase. The issue has already been resolved by implementing as_kwargs() for StringMapping that returns Some(mapping.clone()) for the Mapping variant. If the issue reoccurs, verify that input_string.rs imports and implements Input trait's as_kwargs method.",
+      "affected_files": [
+        "pydantic-core/src/input/input_string.rs",
+        "pydantic-core/src/validators/model.rs"
+      ],
+      "severity": "low",
+      "confidence": 0.85,
+      "issue_type": "bug",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 1.0,
+      "file_accuracy": 0.667,
+      "severity_fit": 0.667,
+      "fix_actionability": 1.0,
+      "overall": 0.85,
+      "reasoning": "AI 准确指出了根因是 StringMapping 缺少 as_kwargs() 实现，与 PR 完全一致。文件方面，AI 提到了两个核心源文件，但未提及测试文件，不过主要文件已覆盖。严重程度 AI 评为 low，但该 bug 会导致自定义 __init__ 不被调用，影响功能正常使用，应为 medium 或 high，存在偏差。修复建议明确指出了需要实现 as_kwargs() 返回 mapping，与 PR 方向一致，具有可操作性。综合评分 0.8。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/pydantic/pydantic/issues/1880",
+    "issue_number": 1880,
+    "title": "Generate a hash function when `allow_mutation` is `False`",
+    "pr_url": "https://github.com/pydantic/pydantic/pull/1881",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "用户可能使用了旧的allow_mutation参数，该参数在新版本中已废弃，应使用frozen=True。当前实现已支持该功能。",
+      "fix_suggestion": "无需修改代码。用户应使用ConfigDict(frozen=True)替代allow_mutation=False。",
+      "affected_files": [],
+      "severity": "low",
+      "confidence": 0.9,
+      "issue_type": "feature",
+      "feature_exists": true,
+      "existing_api": "在模型类上设置 `__hash__` 方法，当 `allow_mutation=False`（或 `frozen=True`）时自动生成，使模型实例可哈希。"
+    },
+    "scores": {
+      "root_cause_accuracy": 0.333,
+      "file_accuracy": 0.0,
+      "severity_fit": 0.333,
+      "fix_actionability": 0.167,
+      "overall": 0.183,
+      "reasoning": "AI认为问题在于用户使用了旧的allow_mutation参数，并建议使用frozen=True，但实际PR新增了frozen参数并生成__hash__方法，并非只是参数重命名。AI未识别到这是新功能实现而非文档问题。未提供受影响文件，得分为0。严重程度为low，但PR涉及多文件修改和新功能，应为medium。修复建议方向正确（建议使用frozen），但认为无需修改代码，实际需要大量代码变更，因此行动性评分较低。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/pydantic/pydantic/issues/7846",
+    "issue_number": 7846,
+    "title": "Unable to pickle an BaseModel with `validate_call`",
+    "pr_url": "https://github.com/pydantic/pydantic/pull/12707",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "pydantic/_internal/_validate_call.py: class ValidateCallWrapper has __slots__ but no __reduce__ method, causing pickle to try to serialize non-picklable slot attributes like ns_resolver (which holds closures from GenerateSchema) and the generated validators.",
+      "fix_suggestion": "Add a __reduce__ method to ValidateCallWrapper that returns (self.__class__, (self.function, self.config_wrapper.config_dict, self.validate_return, None)) and modify __init__ to handle parent_namespace=None by skipping ns_resolver creation and setting __pydantic_complete__=False, so validators are rebuilt lazily on first call after unpickling.",
+      "affected_files": [
+        "pydantic/_internal/_validate_call.py"
+      ],
+      "severity": "high",
+      "confidence": 0.85,
+      "issue_type": "bug",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 0.167,
+      "file_accuracy": 0.0,
+      "severity_fit": 0.333,
+      "fix_actionability": 0.0,
+      "overall": 0.117,
+      "reasoning": "AI将根因定位到ValidateCallWrapper的pickle问题，但实际PR仅添加了回归测试，未修改任何源文件如_validate_call.py，说明问题可能已存在或在其他地方修复。AI指出的受影响文件与PR完全不匹配，严重程度可能偏高，因为PR只是添加测试而非紧急修复。修复建议虽然具体，但与PR实际方向（仅添加测试）不一致。综合来看，AI分析不准确，仅严重程度评级可能因问题存在而部分合理。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/pydantic/pydantic/issues/12446",
+    "issue_number": 12446,
+    "title": "Memory leak in model_rebuild(force=True)",
+    "pr_url": "https://github.com/pydantic/pydantic/pull/12689",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "PrebuiltValidator::try_get_from_schema (src/validators/prebuilt.rs:18-26) and PrebuiltSerializer::try_get_from_schema (src/serializers/prebuilt.rs:19-26) unconditionally fetch and store strong Py<T> references to __pydantic_validator__/__pydantic_serializer__ from referenced model classes during schema building. When models are force-rebuilt sequentially, these prebuilt references capture validators/serializers from PREVIOUS rebuild cycles (since referenced models may not have been rebuilt yet at that point), creating cross-generational strong references that prevent garbage collection. The _use_prebuilt=False flag from Python does propagate through DefinitionsBuilder::use_prebuilt(), but the definition-ref resolution when building schemas for other models still triggers prebuilt lookups that can return stale instances.",
+      "fix_suggestion": "The fix should ensure that during a force rebuild, PrebuiltValidator/PrebuiltSerializer do not return stale references. Two options: (1) In get_prebuilt(), check if the class's __pydantic_complete__ flag is True but the validator/serializer being fetched is from a different rebuild generation. This is hard to detect. (2) Better: Add a new boolean flag to DefinitionsBuilder (e.g., 'is_rebuilding') that is set when _use_prebuilt=false, and pass it through to get_prebuilt(). When this flag is set, get_prebuilt() should return None unconditionally, forcing fresh validator/serializer construction. This ensures that during a rebuild sequence, all nested validator/serializer references are freshly built rather than reusing pre-existing ones. An alternative intermediate fix: After all rebuilds complete, force a garbage collection pass that clears references. But option 2 is more principled.",
+      "affected_files": [
+        "pydantic-core/src/validators/prebuilt.rs",
+        "pydantic-core/src/serializers/prebuilt.rs",
+        "pydantic-core/src/common/prebuilt.rs",
+        "pydantic-core/src/validators/mod.rs",
+        "pydantic-core/src/serializers/shared.rs",
+        "pydantic-core/src/serializers/mod.rs"
+      ],
+      "severity": "high",
+      "confidence": 0.85,
+      "issue_type": "bug",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 0.967,
+      "file_accuracy": 0.817,
+      "severity_fit": 1.0,
+      "fix_actionability": 0.967,
+      "overall": 0.927,
+      "reasoning": "AI 准确指出了根因是 force_rebuild 时预构建验证器/序列化器被重用导致的内存泄漏，与 PR 标题和修改方向一致（通过 _use_prebuilt 标志控制重用）。文件命中率高，AI 主要列出了 Rust 源代码文件，PR 还修改了 Python 侧代码和测试文件，但核心逻辑覆盖良好。严重程度 high 合理，因为是内存泄漏。修复建议（添加 is_rebuilding 标志）与 PR 实际实现（在 DefinitionsBuilder 中增加 use_prebuilt 布尔值并传递）高度吻合，只是实现细节略有不同。综合评分较高。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/pydantic/pydantic/issues/6945",
+    "issue_number": 6945,
+    "title": "MongoDsn.build gives AttributeError",
+    "pr_url": "https://github.com/pydantic/pydantic/pull/7116",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "In pydantic/networks.py (line 879), the MongoDsn class is being shadowed by an Annotated type alias defined later in the file (likely MongoDsnNoDefaultPort or a similar construct). The module exports MongoDsn as a Union[Annotated[...]] instead of the class itself. This makes it a typing special form, so attribute access goes through typing.__getattr__ which raises AttributeError for 'build'.",
+      "fix_suggestion": "Ensure that the class MongoDsn is not overwritten by a type alias. If an Annotated variant is needed, use a different name (e.g., MongoDsnNoDefaultPort) and keep MongoDsn as the plain class. Check the end of pydantic/networks.py for any redefinition of MongoDsn and remove it, or rename the conflicting alias.",
+      "affected_files": [
+        "pydantic/networks.py"
+      ],
+      "severity": "high",
+      "confidence": 0.85,
+      "issue_type": "bug",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 0.0,
+      "file_accuracy": 0.667,
+      "severity_fit": 0.833,
+      "fix_actionability": 0.0,
+      "overall": 0.158,
+      "reasoning": "AI 分析的根因（类被类型别名覆盖）与 PR 实际修复（回退一个导致问题的新功能 commit）完全不同，因此 root_cause_accuracy 为 0。受影响文件 pydantic/networks.py 正确，且严重程度 high 合理，但修复建议方向完全错误，建议保留类名但 PR 实际是回退代码，因此 fix_actionability 为 0。综合评分较低。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/pydantic/pydantic/issues/12007",
+    "issue_number": 12007,
+    "title": "`Secret` is unnecessarily invariant, can be made covariant",
+    "pr_url": "https://github.com/pydantic/pydantic/pull/12008",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "用户请求的功能已在当前代码库中实现，pydantic/types.py 中 SecretType 已定义为协变类型变量。",
+      "fix_suggestion": "无需修改，该功能已实现。用户可验证协变行为。",
+      "affected_files": [],
+      "severity": "low",
+      "confidence": 0.9,
+      "issue_type": "feature",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 0.0,
+      "file_accuracy": 0.0,
+      "severity_fit": 0.167,
+      "fix_actionability": 0.0,
+      "overall": 0.033,
+      "reasoning": "AI 分析完全错误：声称功能已实现，但实际上 Issue 描述的问题确实存在且需要修复。PR 对 pydantic/types.py 进行了修改（添加 covariant=True），并新增测试文件。AI 指出无需修改，与实际修复完全相反，因此根因、文件和修复建议均为0分。严重程度定为 low 基本合理，因为该问题是类型协变性的增强，不影响运行时，故0.5分。综合评分极低。",
+      "judge_runs": 3
+    }
+  }
+]

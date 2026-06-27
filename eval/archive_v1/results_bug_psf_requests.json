@@ -1,0 +1,231 @@
+[
+  {
+    "issue_url": "https://github.com/psf/requests/issues/6859",
+    "issue_number": 6859,
+    "title": "Documentation: Session docstring for verify attribute should note that it supports a string value.",
+    "pr_url": "https://github.com/psf/requests/pull/6865",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "在 src/requests/sessions.py 的 Session.__init__ 方法中，self.verify 属性的 docstring 只描述了布尔值的行为，没有提及也支持字符串路径。这与实际实现不符，因为 verify 参数在 request 方法和底层适配器中都支持字符串。用户提交的 PR #6865 已经解决了这个问题，但需要确认改动是否正确。",
+      "fix_suggestion": "在 src/requests/sessions.py 中，找到 Session.__init__ 方法里 self.verify 的注释部分，添加一行说明：'If verify is set to a string, it must be the path to a CA bundle file that will be used to verify the TLS certificate.' 参考 request 方法的 docstring 已有类似表述。",
+      "affected_files": [
+        "src/requests/sessions.py"
+      ],
+      "severity": "low",
+      "confidence": 0.9,
+      "issue_type": "question",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 1.0,
+      "file_accuracy": 1.0,
+      "severity_fit": 1.0,
+      "fix_actionability": 1.0,
+      "overall": 1.0,
+      "reasoning": "根因完全匹配：AI 准确指出 docstring 缺失 string 支持说明，与 PR 修复一致。文件完全正确：仅修改 sessions.py。严重程度 low 合理，因为仅为文档改进。修复建议与 PR 添加的注释几乎完全相同，可操作性强。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/psf/requests/issues/6715",
+    "issue_number": 6715,
+    "title": "SSLV3_ALERT_HANDSHAKE_FAILURE after upgrade from 2.31.0 to 2.32.2",
+    "pr_url": "https://github.com/psf/requests/pull/6716",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "在 requests 2.32.2 中，新增的 `get_connection_with_tls_context` 和 `build_connection_pool_key_attributes` 方法在每次请求时调用 `_urllib3_request_context` 生成新的 SSL 上下文，覆盖了用户通过 `init_poolmanager` 设置的 poolmanager 级别的自定义 ssl_context，导致自定义 SSL 配置失效。",
+      "fix_suggestion": "修改 `build_connection_pool_key_attributes` 方法，在从 `_urllib3_request_context` 获取参数后，检查 poolmanager 是否已经配置了 `ssl_context`（例如通过 `init_poolmanager` 设置），如果有则使用该上下文而不是自动生成的上下文。此外，可以添加一个新的可覆盖方法（如 `build_pool_kwargs`）让子类能够更灵活地修改池参数。",
+      "affected_files": [
+        "requests/adapters.py"
+      ],
+      "severity": "high",
+      "confidence": 0.8,
+      "issue_type": "bug",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 0.767,
+      "file_accuracy": 0.833,
+      "severity_fit": 1.0,
+      "fix_actionability": 0.533,
+      "overall": 0.783,
+      "reasoning": "AI 准确指出了根因：自定义 SSL 上下文被覆盖，而 PR 正是修复了这一问题，允许子类覆盖 pool 参数。受影响文件 adapters.py 完全正确。严重性 high 合理，因为这是一个破坏性 bug。修复建议提到修改 build_connection_pool_key_attributes 方法，但实际 PR 修改了 _urllib3_request_context 签名并新增了 poolmanager 参数，方向一致但具体实现细节有偏差，因此 fix_actionability 为 0.5。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/psf/requests/issues/6027",
+    "issue_number": 6027,
+    "title": "Proxy authentication bug",
+    "pr_url": "https://github.com/psf/requests/pull/6028",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "In `requests/adapters.py`, the new `build_connection_pool_key_attributes` (introduced in PR #5924) does not preserve the `Proxy-Authorization` header on redirect. When a redirect occurs, `send()` calls `get_connection()` which calls this method, which computes proxy headers fresh from `proxy_headers()`, discarding the auth header set by `HTTPProxyAuth`. This causes the proxy to reject the redirected request with 407.",
+      "fix_suggestion": "In `HTTPAdapter.send()`, before rebuilding the request for a redirect, save the `Proxy-Authorization` header from the original request and reapply it to the new request after redirect. Alternatively, modify `build_connection_pool_key_attributes` to accept and preserve proxy auth headers. The simplest fix: in `send()`, after preparing the request but before sending, if a redirect occurs, copy the `Proxy-Authorization` header from the original prepared request to the new prepared request.",
+      "affected_files": [
+        "src/requests/adapters.py"
+      ],
+      "severity": "high",
+      "confidence": 0.85,
+      "issue_type": "bug",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 0.0,
+      "file_accuracy": 0.0,
+      "severity_fit": 0.667,
+      "fix_actionability": 0.0,
+      "overall": 0.117,
+      "reasoning": "AI 根因分析完全错误：它认为 bug 是由于 build_connection_pool_key_attributes 未保留 Proxy-Authorization 头，但实际修复在 utils.py 中修正了代理 URL 的认证解析（auth 未加入 netloc），与 AI 分析无关。受影响文件 AI 只列了 adapters.py，实际修改的是 utils.py 和测试文件，无重叠。严重程度评级 high 可能偏高。修复建议与 PR 方向不同，PR 是修正 URL 解析，AI 建议保留请求头，不可参考。综合评分很低。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/psf/requests/issues/6643",
+    "issue_number": 6643,
+    "title": "Leading slash in uri followed by column fails",
+    "pr_url": "https://github.com/psf/requests/pull/6644",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "urllib3 的 parse_url 函数 (util/url.py:425) 在处理以双斜杠开头的相对路径 URL（如 '//v:h'）时，错误地将 '//' 后的部分解析为 authority，导致 _HOST_PORT_RE 匹配失败进而引发 AttributeError。requests 在 adapter.send 中直接将相对路径 URL 传递给 urllib3 的 urlopen，触发了该 bug。",
+      "fix_suggestion": "在 requests 的 adapter.send 方法中，对 URL 进行预处理，将双斜杠开头的相对路径 URL 中的 '//' 替换为单斜杠 '/'，避免触发 authority 解析。或者在 urllib3 的 parse_url 中增加对双斜杠路径的特殊处理。推荐先在 requests 层面修复，因为这是更上层的库，可以快速过滤掉异常 URL。",
+      "affected_files": [
+        "urllib3/src/urllib3/util/url.py",
+        "urllib3/src/urllib3/connectionpool.py",
+        "requests/src/requests/adapters.py"
+      ],
+      "severity": "high",
+      "confidence": 0.85,
+      "issue_type": "bug",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 1.0,
+      "file_accuracy": 0.9,
+      "severity_fit": 1.0,
+      "fix_actionability": 1.0,
+      "overall": 0.973,
+      "reasoning": "AI 准确识别了根因：双斜杠开头的路径导致 urllib3 解析失败，与 PR 修复完全一致（PR 在 requests 层面预处理 '//'）。受影响文件包含 requests/adapters.py，与 PR 修改文件吻合。严重程度 high 合理，因为该 bug 导致崩溃。修复建议推荐在 requests 侧预处理，与 PR 方向完全一致，非常可操作。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/psf/requests/issues/5367",
+    "issue_number": 5367,
+    "title": "Getting http://.example.com raises UnicodeError",
+    "pr_url": "https://github.com/psf/requests/pull/5414",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "PreparedRequest.prepare_url 方法中，对于 ASCII host 以 '.' 或 '*' 开头的情况，缺乏显式检查，导致 host 被传递到后续 IDNA 编码步骤时抛出 UnicodeError，而未按预期抛出 InvalidURL。",
+      "fix_suggestion": "在 requests/models.py 的 prepare_url 方法中，在 `if not unicode_is_ascii(host):` 分支之后，添加一个 `elif` 分支：`elif host.startswith(('*', '.')): raise InvalidURL('URL has an invalid label.')`。确保在尝试 IDNA 编码之前捕获无效的 ASCII host。",
+      "affected_files": [
+        "requests/models.py"
+      ],
+      "severity": "medium",
+      "confidence": 0.95,
+      "issue_type": "bug",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 0.833,
+      "file_accuracy": 1.0,
+      "severity_fit": 0.5,
+      "fix_actionability": 0.917,
+      "overall": 0.778,
+      "reasoning": "根因分析方向正确，指出缺失检查导致UnicodeError而非InvalidURL，但AI建议在非ASCII分支后添加elif，而实际PR是在已有elif host.startswith('*')处直接添加'.'，逻辑略有偏差，故0.5。文件准确度完全匹配核心文件models.py，测试文件虽有遗漏但非必需，故1.0。严重程度medium合理，因为非安全性且已有类似修复，但实际PR仅简单修改，故0.5。修复建议与实际PR高度一致，直接添加'.'判断，故1.0。综合评分取加权平均，约0.65。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/psf/requests/issues/5984",
+    "issue_number": 5984,
+    "title": "url \"schema\" should be \"scheme\"",
+    "pr_url": "https://github.com/psf/requests/pull/6017",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "requests 库中异常类 MissingSchema 及部分错误消息使用了不规范的术语 'schema' 而非正确的 'scheme'，违反了 URL 标准定义。",
+      "fix_suggestion": "1. 在 exceptions.py 中将 MissingSchema 重命名为 MissingScheme，并保留旧类作为别名以实现向后兼容。2. 模型中所有引用 MissingSchema 的地方改为 MissingScheme。3. 更新所有错误消息，将 'schema' 替换为 'scheme'。",
+      "affected_files": [
+        "src/requests/exceptions.py",
+        "src/requests/models.py"
+      ],
+      "severity": "low",
+      "confidence": 0.9,
+      "issue_type": "question",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 1.0,
+      "file_accuracy": 1.0,
+      "severity_fit": 1.0,
+      "fix_actionability": 0.6,
+      "overall": 0.908,
+      "reasoning": "Root cause accuracy is perfect: AI correctly identified the misuse of 'schema' instead of 'scheme'. File accuracy is perfect: AI listed both files modified in the PR. Severity is low, which matches the non-critical nature of the fix. Fix actionability is slightly lower because AI suggested renaming the exception class and adding an alias, but the PR only changed docstrings and error messages without renaming the class, so the suggestion was more intrusive than needed.",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/psf/requests/issues/5530",
+    "issue_number": 5530,
+    "title": "Test test_https_warnings is not functional with pytest-httpbin 1.0",
+    "pr_url": "https://github.com/psf/requests/pull/5869",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "pytest-httpbin 1.0 更换了证书，不再触发 SubjectAltNameWarning，而 test_https_warnings 仍期望收到该警告，导致断言失败。",
+      "fix_suggestion": "移除 Pipfile 中对 pytest-httpbin 的版本锁定（或放宽至 >=1.0），并修改 test_https_warnings 测试：1）更新期望警告元组，移除 SubjectAltNameWarning；或 2）生成自定义旧证书 fixture 来触发警告。推荐方案1，简单且兼容新版本。",
+      "affected_files": [
+        "Pipfile",
+        "tests/test_requests.py"
+      ],
+      "severity": "high",
+      "confidence": 0.85,
+      "issue_type": "bug",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 0.5,
+      "file_accuracy": 0.5,
+      "severity_fit": 0.5,
+      "fix_actionability": 0.0,
+      "overall": 0.325,
+      "reasoning": "AI 指出的根因（pytest-httpbin 1.0 证书不再触发警告）方向正确，但实际 PR 并非简单移除版本锁定或调整测试期望，而是引入 trustme 和自定义服务器 fixture 彻底重写测试，故根因匹配度一般。AI 建议修改的两个文件（Pipfile、tests/test_requests.py）中，Pipfile 未在 PR 中出现（实际修改了 requirements-dev.txt），且漏掉了关键的 conftest.py，因此文件准确度较低。严重程度设为 high，但 PR 涉及大量重构，实际紧迫性中等，评级偏高。修复建议（方案1）与 PR 方向不一致，PR 采取了更复杂的方案来测试 commonName 支持，而非移除警告检查或使用旧证书，故修复可执行性差。综合评分较低。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/psf/requests/issues/5274",
+    "issue_number": 5274,
+    "title": "Two Host header are being sent when doing chunk transfer with Session",
+    "pr_url": "https://github.com/psf/requests/pull/5391",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "在 urllib3 的 connectionpool.py 中，当请求体为生成器（触发 chunked transfer）时，_make_request 方法会基于连接池的 host/port 自动添加 Host 头，同时用户通过 PreparedRequest.headers 设置的 Host 头也被保留，导致两个 Host 头被发送。requests 的 HTTPAdapter.send() 在调用 urllib3 之前未检查或去重 Host 头。",
+      "fix_suggestion": "在 requests/adapters.py 的 HTTPAdapter.send() 方法中，在调用 urllib3 连接池发送请求之前，检查 PreparedRequest.headers 中是否已经包含 'Host' 头。如果包含，则移除 urllib3 可能自动添加的 Host 头（例如通过修改 headers 字典或使用 prepared_request.headers 中的值覆盖）。或者在 urllib3 的 urlopen/_make_request 方法中，在添加默认 Host 头之前检查是否已存在，若存在则跳过。",
+      "affected_files": [
+        "requests/adapters.py",
+        "urllib3/connectionpool.py"
+      ],
+      "severity": "high",
+      "confidence": 0.85,
+      "issue_type": "bug",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 1.0,
+      "file_accuracy": 0.833,
+      "severity_fit": 1.0,
+      "fix_actionability": 0.933,
+      "overall": 0.967,
+      "reasoning": "AI 分析准确指出了根因是 urllib3 自动添加 Host 头与用户设置的 Host 头冲突，导致两个 Host 头被发送。实际 PR 在 requests/adapters.py 中修改，通过 skip_host 参数避免 urllib3 添加 Host 头，与 AI 建议一致。受影响文件完全匹配。严重程度 high 合理，修复紧急且必要。修复建议与 PR 方向高度一致，可直接参考。",
+      "judge_runs": 3
+    }
+  }
+]

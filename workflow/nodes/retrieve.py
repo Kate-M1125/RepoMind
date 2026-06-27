@@ -105,7 +105,17 @@ def retrieve_context(state: IssueState) -> dict:
     stack_ctx = state.get("stack_trace_context", "")
     stack_query = stack_ctx[:300] if stack_ctx else None
 
-    queries = [q for q in [title_query, type_query, stack_query] if q]
+    # HyDE：让 LLM 生成"可能引发这个 bug 的代码形态"，用代码查代码，语义空间更匹配
+    try:
+        hyde_prompt = (
+            f"根据以下 GitHub Issue，写出最可能引发该 bug 的 Python/Rust 代码片段（20 行内）：\n"
+            f"{state['title']}\n{state.get('body','')[:300]}"
+        )
+        hyde_doc = chat("你是一名擅长预测 bug 位置的工程师，只输出代码。", hyde_prompt, max_tokens=200)
+    except Exception:
+        hyde_doc = None
+
+    queries = [q for q in [hyde_doc, title_query, type_query, stack_query] if q]
 
     per_query_results: list[list[str]] = []
     per_query_metadatas: list[list[dict]] = []

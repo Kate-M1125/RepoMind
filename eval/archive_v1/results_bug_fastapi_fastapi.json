@@ -1,0 +1,226 @@
+[
+  {
+    "issue_url": "https://github.com/fastapi/fastapi/issues/13533",
+    "issue_number": 13533,
+    "title": "Multiple regressions in the handling of forms & form validation",
+    "pr_url": "https://github.com/fastapi/fastapi/pull/13537",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "在 fastapi/dependencies/utils.py 中，PR #12134 注释了 _extract_form_body 末尾的循环（原行 794-796），该循环将 received_body 中未在 values 中的键补充进去，但由于此前 get_multidict_value 对空字符串返回了空字符串而非 None（PR #12117 移除了空字符串到 None 的转换），导致最终 values 中字段值为空字符串而非默认的 None。",
+      "fix_suggestion": "1. 在 get_multidict_value 函数中恢复空字符串到 None 的转换：当字段值为空字符串且字段允许 None（如 Optional）时返回 None。2. 在 _extract_form_body 函数中恢复被注释的循环，但需确保不覆盖已存在的 None 值——仅当键不在 values 中时才从 received_body 添加。",
+      "affected_files": [
+        "fastapi/dependencies/utils.py"
+      ],
+      "severity": "high",
+      "confidence": 0.9,
+      "issue_type": "bug",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 0.767,
+      "file_accuracy": 1.0,
+      "severity_fit": 0.833,
+      "fix_actionability": 0.6,
+      "overall": 0.792,
+      "reasoning": "AI 分析的根因接近实际修复，但将主要责任归给 get_multidict_value 空字符串转换的移除，而实际 PR 主要调整了循环条件从 'key not in values' 改为 'key not in field_aliases'，避免了覆盖已处理的表单字段。AI 涉及了多余的解释，但方向基本正确。受影响文件完全覆盖了 PR 修改的 utils.py。严重程度 high 合理，因为影响表单默认值功能。修复建议中恢复空字符串转换的部分与实际 PR 不一致，但循环修正的建议大体准确，只是不够精确。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/fastapi/fastapi/issues/10236",
+    "issue_number": 10236,
+    "title": "Inconsistent add_api_route types",
+    "pr_url": "https://github.com/fastapi/fastapi/pull/10240",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "In fastapi/applications.py, the add_api_route method's endpoint parameter was typed as Callable[..., Coroutine[Any, Any, Response]], while the underlying APIRouter.add_api_route method already used the more permissive Callable[..., Any]. This mismatch caused mypy to reject functions returning custom Pydantic models (which are valid since FastAPI converts them to JSONResponse internally).",
+      "fix_suggestion": "Change the type annotation of the endpoint parameter in FastAPI.add_api_route from Callable[..., Coroutine[Any, Any, Response]] to Callable[..., Any] to match the signature of APIRouter.add_api_route. This eliminates the false positive mypy error and is consistent with the fact that FastAPI.add_api_route simply delegates to self.router.add_api_route.",
+      "affected_files": [
+        "fastapi/applications.py"
+      ],
+      "severity": "low",
+      "confidence": 0.85,
+      "issue_type": "bug",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 1.0,
+      "file_accuracy": 1.0,
+      "severity_fit": 1.0,
+      "fix_actionability": 1.0,
+      "overall": 1.0,
+      "reasoning": "The AI analysis accurately identifies the root cause as a type annotation mismatch in the endpoint parameter of FastAPI.add_api_route, which is exactly what the PR fixes. The affected file is correctly specified as fastapi/applications.py. The severity is appropriately low as the bug only affects typing rather than runtime. The suggested fix matches the PR's change of the type annotation from Callable[..., Coroutine[Any, Any, Response]] to Callable[..., Any]. Overall, the analysis is precise and actionable.",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/fastapi/fastapi/issues/10997",
+    "issue_number": 10997,
+    "title": "Using pydantic Json Type as Form data type doesn't work",
+    "pr_url": "https://github.com/fastapi/fastapi/pull/14616",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "在 fastapi/dependencies/utils.py 的 get_dependant 函数中，当使用 Form() 且参数类型为 Json[T] 时，未将输入类型识别为 str，导致后续验证时传递了非字符串对象。",
+      "fix_suggestion": "修改 get_dependant 函数，在处理 Form() 字段时，若字段类型 origin 是 pydantic.Json，则将该字段的 input_field.type_ 强制设为 str，并确保字段作为表单字段处理。",
+      "affected_files": [
+        "fastapi/dependencies/utils.py"
+      ],
+      "severity": "high",
+      "confidence": 0.85,
+      "issue_type": "bug",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 0.933,
+      "file_accuracy": 1.0,
+      "severity_fit": 1.0,
+      "fix_actionability": 0.9,
+      "overall": 0.95,
+      "reasoning": "AI 准确指出了根因在于 fastapi/dependencies/utils.py 中 get_dependant 函数对 Form() 与 Json 类型处理不当，与 PR 实际修改完全一致。受影响文件完全覆盖 PR 修改的关键文件。严重程度为 high 合理，因为该 bug 导致特定类型无法使用。修复建议方向与 PR 高度一致，均指向修改相应函数并强制设置类型。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/fastapi/fastapi/issues/5646",
+    "issue_number": 5646,
+    "title": "Bad encoding in query parameters with new TestClient using httpx.Client",
+    "pr_url": "https://github.com/fastapi/fastapi/pull/5659",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "Starlette 0.21.0's TestClient (starlette/testclient.py) does not properly encode non-ASCII characters in query parameters when using httpx internally, leading to double-encoding or incorrect byte sequences. The fix was applied in Starlette 0.22.0.",
+      "fix_suggestion": "Update the Starlette dependency from '0.21.0' to '>=0.22.0' in FastAPI's setup.cfg, pyproject.toml, or requirements files. This will pull in the fix from Starlette PR #1953, which corrects query parameter encoding in TestClient.",
+      "affected_files": [
+        "starlette/testclient.py"
+      ],
+      "severity": "high",
+      "confidence": 0.85,
+      "issue_type": "bug",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 1.0,
+      "file_accuracy": 0.5,
+      "severity_fit": 1.0,
+      "fix_actionability": 1.0,
+      "overall": 0.875,
+      "reasoning": "Root cause accuracy is perfect; AI correctly identified the Starlette version issue causing bad encoding. File accuracy is partial because AI only mentioned starlette/testclient.py, while the PR also modified tests/test_starlette_urlconvertors.py and pyproject.toml, though the core fix is in pyproject.toml bumping Starlette. Severity fit is accurate as a high-severity bug affecting query parameter encoding. Fix actionability is high, as bumping Starlette version is exactly what the PR does. Overall score reflects strong alignment with minor file specification gap.",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/fastapi/fastapi/issues/998",
+    "issue_number": 998,
+    "title": "Dependency override websocket broken",
+    "pr_url": "https://github.com/fastapi/fastapi/pull/1122",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "在旧版本 fastapi/routing.py 的 APIRouter.add_api_websocket_route 方法中，构造 APIWebSocketRoute 实例时没有传入 dependency_overrides_provider 参数（即 self.dependency_overrides_provider），而 APIWebSocketRoute 的 __init__ 方法支持该参数并将其传递给 get_websocket_app，最终用于 solve_dependencies 中的依赖覆盖解析。缺少该参数导致依赖覆盖对 WebSocket 端点无效。",
+      "fix_suggestion": "修改 APIRouter.add_api_websocket_route 方法，在构造 APIWebSocketRoute 时传入 dependency_overrides_provider=self.dependency_overrides_provider 参数，确保 WebSocket 路由能够使用应用或路由器的依赖覆盖机制。该修复已在 PR #1122 中实现，并合并到当前版本中。",
+      "affected_files": [
+        "fastapi/routing.py"
+      ],
+      "severity": "medium",
+      "confidence": 0.9,
+      "issue_type": "bug",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 1.0,
+      "file_accuracy": 0.9,
+      "severity_fit": 0.833,
+      "fix_actionability": 1.0,
+      "overall": 0.95,
+      "reasoning": "AI 正确指出了根因是缺少 dependency_overrides_provider 参数，与实际修复完全一致。受影响文件 fastapi/routing.py 被准确识别。严重程度 medium 合理，因为此 bug 影响依赖注入功能但非崩溃。修复建议与 PR 完全一致，包括具体修改方法和参数传递。综合评分满分。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/fastapi/fastapi/issues/539",
+    "issue_number": 539,
+    "title": "route_class not preserved when calling APIRouter.include_router",
+    "pr_url": "https://github.com/fastapi/fastapi/pull/538",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "在fastapi/routing.py的`_RouterIncludeContext` dataclass中缺少`route_class`字段，导致`include_router`时被包含路由的`route_class`未被保留，父路由的`route_class`覆盖了子路由的自定义路由类。",
+      "fix_suggestion": "1. 在`_RouterIncludeContext` dataclass中添加`route_class: type[APIRoute] | None = None`字段。\n2. 在`for_include`方法中，将`parent_router.route_class`作为参数传递并赋值给`route_class`字段（当子路由未显式覆盖时）。\n3. 在`combine`方法中，合并`route_class`时优先使用子路由的（即`child_context.route_class or self.route_class`）。\n4. 在`_build_effective_context`（或相关构建路由上下文的地方）中，判断`include_context`是否有`route_class`，如果有则覆盖父路由的`route_class`。",
+      "affected_files": [
+        "fastapi/routing.py"
+      ],
+      "severity": "high",
+      "confidence": 0.9,
+      "issue_type": "bug",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 0.1,
+      "file_accuracy": 0.833,
+      "severity_fit": 0.833,
+      "fix_actionability": 0.067,
+      "overall": 0.183,
+      "reasoning": "AI 分析的根因（缺少 route_class 字段）与实际 PR 修复（传递 route_class_override 参数）略有偏差，实际修复并未修改 _RouterIncludeContext，而是将 route_class 作为参数显式传递。文件准确，主要修改在 fastapi/routing.py。严重程度 high 基本合理。修复建议中关于 _RouterIncludeContext 的修改方向错误，实际 PR 采用了不同的方式。综合评分较低。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/fastapi/fastapi/issues/914",
+    "issue_number": 914,
+    "title": "Sending incorrect data cause 500 error",
+    "pr_url": "https://github.com/fastapi/fastapi/pull/918",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "在fastapi/dependencies/utils.py的request_body_to_args函数中，当接收到的请求体是JSON数组（list）时，代码仍假设其为字典并调用.get()方法，导致AttributeError。异常被捕获后仅添加missing field错误，使得本应通过验证的列表字段值丢失，最终引发500错误。",
+      "fix_suggestion": "在request_body_to_args函数的for循环中，处理body_to_process时添加对列表类型的判断：如果body_to_process是list，则直接将body_to_process作为字段值（针对列表字段），或者尝试按字段名索引（无果则设为None）。具体修改：在try块之前检查isinstance(body_to_process, list)，若是则无需调用.get()，直接将body_to_process赋值给value，然后跳过try块。同时确保后续验证逻辑能正确处理列表值。",
+      "affected_files": [
+        "fastapi/dependencies/utils.py"
+      ],
+      "severity": "high",
+      "confidence": 0.9,
+      "issue_type": "bug",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 0.8,
+      "file_accuracy": 1.0,
+      "severity_fit": 1.0,
+      "fix_actionability": 0.4,
+      "overall": 0.758,
+      "reasoning": "AI准确指出了根因是在request_body_to_args中当received_body为列表时调用.get()导致AttributeError，与PR修复完全一致。受影响文件正确识别为fastapi/dependencies/utils.py。严重程度high合理，因为该bug导致500错误。修复建议方向正确，但具体实现细节与PR（使用try-except捕获AttributeError）略有差异，建议可操作性稍低，因此fix_actionability给0.7。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/fastapi/fastapi/issues/842",
+    "issue_number": 842,
+    "title": "Support repeated key=value in form data",
+    "pr_url": "https://github.com/fastapi/fastapi/pull/856",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "在 fastapi/dependencies/utils.py 的 request_body_to_args 函数中，处理表单数据时使用了 MultiDict 的 get 方法，该方法只返回重复 key 的最后一个值，没有将重复 key 的值收集为列表。当用户声明 Form 字段类型为 list 时，无法得到预期的列表值。",
+      "fix_suggestion": "在 fastapi/dependencies/utils.py 的 request_body_to_args 函数中，当 received_body 是表单数据时，使用 received_body.multi_items() 获取所有键值对，构建一个字典将重复 key 的值聚合为列表。然后对于字段类型为 list 的，直接传递聚合后的列表；对于其他类型，保持原有单个值行为（或取第一个值）。具体可在循环中判断 field.shape is list 或 field.type_ 是否为 list，并相应处理。同时需注意保持对 Optional 等类型的兼容。",
+      "affected_files": [
+        "fastapi/dependencies/utils.py"
+      ],
+      "severity": "medium",
+      "confidence": 0.95,
+      "issue_type": "feature",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 1.0,
+      "file_accuracy": 1.0,
+      "severity_fit": 0.667,
+      "fix_actionability": 0.5,
+      "overall": 0.817,
+      "reasoning": "AI 准确指出了根因：`request_body_to_args` 未正确处理重复 form 键值对，与 PR 实际修复一致。且 AI 列出的受影响文件 `fastapi/dependencies/utils.py` 正是 PR 修改的唯一源文件，文件命中准确。严重程度评为 medium 基本合理，但该问题可能导致功能错误，实际修复中新增了测试，可视为更接近 high。修复建议中提到了使用 `multi_items()` 聚合重复键，但 PR 实际通过检查 `field.shape` 或 `field.type_` 是否为序列类型并调用 `receive` 来获取多值，方向正确但细节有偏差。综合评分取平均值。",
+      "judge_runs": 3
+    }
+  }
+]

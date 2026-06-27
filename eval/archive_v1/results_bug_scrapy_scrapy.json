@@ -1,0 +1,226 @@
+[
+  {
+    "issue_url": "https://github.com/scrapy/scrapy/issues/7409",
+    "issue_number": 7409,
+    "title": "Investigate/remove setting the asyncio event loop in Shell._schedule()",
+    "pr_url": "https://github.com/scrapy/scrapy/pull/7594",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "Feature Request 基于旧代码，当前 Shell._schedule() 已不包含 set_asyncio_event_loop() 调用，事件循环由上级调用（AsyncCrawlerProcess.__init__() 或 Crawler._apply_settings()）保证已设置。",
+      "fix_suggestion": "无需修改代码。可考虑在 Shell._schedule() 或相关注释中添加说明，指出事件循环已由上级调用设置，无需在此处调用 set_asyncio_event_loop()。",
+      "affected_files": [],
+      "severity": "low",
+      "confidence": 0.75,
+      "issue_type": "feature",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 1.0,
+      "file_accuracy": 0.333,
+      "severity_fit": 1.0,
+      "fix_actionability": 0.667,
+      "overall": 0.742,
+      "reasoning": "Root cause accuracy is perfect: AI correctly identified that the set_asyncio_event_loop call is unnecessary and should be removed. File accuracy is 0.0 because AI did not list any affected files, while the PR modified scrapy/shell.py. Severity fit is 1.0: low is appropriate for a cleanup. Fix actionability is 0.5: AI suggested adding comments instead of actually removing the code, which differs from the PR's direct removal.",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/scrapy/scrapy/issues/7602",
+    "issue_number": 7602,
+    "title": "FTPDownloadHandler doesn't close connections",
+    "pr_url": "https://github.com/scrapy/scrapy/pull/7667",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "FTPDownloadHandler.download_request() 在 except CommandFailed 分支中返回 Response 时，没有调用 FTPClient.quit() 进行优雅关闭，仅依赖 finally 块中的 transport.loseConnection() 关闭 TCP 连接，可能导致 FTP 连接资源泄漏（FTP 会话未正确终止，服务器端资源未释放）。同样，ReceivedDataProtocol 在异常路径中可能未正确关闭。",
+      "fix_suggestion": "1. 在 except CommandFailed 分支中，返回 Response 前调用 client.quit() 并等待其完成，然后调用 client.transport.loseConnection()。\n2. 修改 finally 块，确保无论成功还是异常路径，都正确关闭 protocol 和 client。\n3. 考虑使用 with 语句或显式在正常路径中也调用 client.quit() 替代 loseConnection()。\n4. 确保 ReceivedDataProtocol 在异常路径中正确关闭（已在 finally 中处理，但需要确认）。",
+      "affected_files": [
+        "scrapy/core/downloader/handlers/ftp.py"
+      ],
+      "severity": "high",
+      "confidence": 0.85,
+      "issue_type": "bug",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 0.667,
+      "file_accuracy": 1.0,
+      "severity_fit": 1.0,
+      "fix_actionability": 0.5,
+      "overall": 0.7,
+      "reasoning": "AI 指出连接未关闭是正确的，但将根因重点放在 except CommandFailed 分支上，而实际 PR 主要通过将 protocol.close() 移入 finally 块并在其后添加 loseConnection() 来修复，涉及所有路径。AI 的修复建议包含 quit() 等复杂步骤，与实际 PR 的简单改动有偏差。文件匹配准确，严重程度合理。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/scrapy/scrapy/issues/5297",
+    "issue_number": 5297,
+    "title": "get_retry_request: allow changing the log level of the gave up message",
+    "pr_url": "https://github.com/scrapy/scrapy/pull/7567",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "用户可能使用了旧版本 Scrapy（低于 2.6），或者未正确使用 give_up_log_level 参数/设置。当前代码已支持该功能。",
+      "fix_suggestion": "无需修改代码。建议用户升级 Scrapy 到 2.6 或更高版本。在调用 get_retry_request 时传递 give_up_log_level='WARNING'，或在 Spider 的 custom_settings 中设置 RETRY_GIVE_UP_LOG_LEVEL='WARNING'，或者在请求的 meta 中添加 give_up_log_level='WARNING'。",
+      "affected_files": [],
+      "severity": "low",
+      "confidence": 0.5,
+      "issue_type": "feature",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 0.0,
+      "file_accuracy": 0.0,
+      "severity_fit": 0.833,
+      "fix_actionability": 0.0,
+      "overall": 0.15,
+      "reasoning": "AI 认为根因是用户使用旧版本或未正确使用已有参数，但实际 PR 是新增 give_up_log_level 功能，AI 完全误判了根因。AI 未列出任何受影响文件，与 PR 修改的多个文件无重叠。严重程度评级为 low 合理，因为该功能是增强而非缺陷修复。修复建议为升级或使用不存在的参数，与 PR 实际新增功能方向完全相反，无法指导修复。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/scrapy/scrapy/issues/3529",
+    "issue_number": 3529,
+    "title": "SitemapSpider memory issues ",
+    "pr_url": "https://github.com/scrapy/scrapy/pull/7007",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "scrapy/utils/sitemap.py中的Sitemap类使用lxml.etree.iterparse，但迭代后未调用elem.clear()和移除父节点引用，导致所有解析的元素保留在内存中，引发高内存占用。",
+      "fix_suggestion": "修改scrapy/utils/sitemap.py中Sitemap类的__iter__方法，在每次yield条目后，对当前元素调用clear()并从其父节点中移除，以释放内存。添加一个辅助函数或内联逻辑，确保迭代器消耗完毕后清理self.xmliter引用。",
+      "affected_files": [
+        "scrapy/utils/sitemap.py"
+      ],
+      "severity": "high",
+      "confidence": 0.85,
+      "issue_type": "feature",
+      "feature_exists": true,
+      "existing_api": "使用 `SitemapSpider` 时，`lxml.etree.iterparse` 迭代解析 Sitemap 文档，避免将整个文档加载到内存中。"
+    },
+    "scores": {
+      "root_cause_accuracy": 0.6,
+      "file_accuracy": 0.5,
+      "severity_fit": 1.0,
+      "fix_actionability": 0.567,
+      "overall": 0.658,
+      "reasoning": "根因部分正确，但AI仅提到内存泄漏问题，PR实际包含更全面的重写和改进；文件覆盖不完整，PR主要修改了spiders/sitemap.py，而AI只列出了utils/sitemap.py；严重程度评定合理；修复建议方向正确，但仅关注iterparse清理，与PR的重构和多处优化有差距。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/scrapy/scrapy/issues/7266",
+    "issue_number": 7266,
+    "title": "Add a setting that works as the `bindaddress` meta",
+    "pr_url": "https://github.com/scrapy/scrapy/pull/7283",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "用户未发现已存在的 `DOWNLOAD_BIND_ADDRESS` 设置。",
+      "fix_suggestion": "无需改动代码。告知用户通过 `settings.py` 设置 `DOWNLOAD_BIND_ADDRESS` 为所需 IP 地址即可实现全局绑定。例如：`DOWNLOAD_BIND_ADDRESS = '192.168.1.100'`。如需为个别请求覆盖，可在 Request 的 meta 中设置 `bindaddress`。",
+      "affected_files": [],
+      "severity": "low",
+      "confidence": 1.0,
+      "issue_type": "feature",
+      "feature_exists": true,
+      "existing_api": "通过设置 `DOWNLOAD_BIND_ADDRESS` 全局绑定地址，所有请求默认使用该地址，但可通过 `bindaddress` 请求 meta 覆盖。"
+    },
+    "scores": {
+      "root_cause_accuracy": 0.0,
+      "file_accuracy": 0.0,
+      "severity_fit": 0.667,
+      "fix_actionability": 0.0,
+      "overall": 0.033,
+      "reasoning": "AI 认为该 issue 是不存在的问题，告知用户已有设置，但实际上并不存在该设置，PR 正是要添加这个设置。根因完全错误，文件未列出任何文件（无匹配），严重程度评级中等（low 与 PR 实际需要修复不符），修复建议方向完全错误（建议使用不存在的设置），综合评分极低。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/scrapy/scrapy/issues/7493",
+    "issue_number": 7493,
+    "title": "Use dataclasses instead of Items in the docs and the project template",
+    "pr_url": "https://github.com/scrapy/scrapy/pull/7513",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "用户提出的需求实际上已经被部分实现：项目模板已使用 dataclass，文档 items.rst 已添加 dataclass 示例。但文档中 Working with Item objects 部分仍然只展示 scrapy.Item 的 API 使用示例，没有提供 dataclass 的等效示例，用户可能希望全面替换。",
+      "fix_suggestion": "1. 在 docs/topics/items.rst 的 Working with Item objects 部分，为每个示例（创建、获取、设置等）补充 dataclass 的等效代码，或创建一个单独的 dataclass 示例章节。\n2. 测试文件中的 scrapy.Item 使用（如 test_command_parse.py 中的占位返回）可以保持原样，因为它们仅用于测试 parse 方法返回值，不带来实际影响。\n3. 确认项目模板 items.py.tmpl 是否已更新——已更新。",
+      "affected_files": [
+        "docs/topics/items.rst",
+        "tests/test_command_parse.py",
+        "tests/test_feedexport.py"
+      ],
+      "severity": "low",
+      "confidence": 0.85,
+      "issue_type": "feature",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 0.333,
+      "file_accuracy": 0.0,
+      "severity_fit": 0.833,
+      "fix_actionability": 0.333,
+      "overall": 0.283,
+      "reasoning": "AI分析的根因（部分已实现，需要补充dataclass示例）与PR实际修复（全面替换多个文档中的scrapy.Item为dataclass）不一致，PR是更彻底的替换而非仅补充示例。AI列出的文件（docs/topics/items.rst, tests/test_command_parse.py, tests/test_feedexport.py）与PR修改的文件（docs/topics/exporters.rst, loaders.rst, media-pipeline.rst, spiders.rst, 项目模板）完全没有交集。严重程度low合理，因为主要影响文档示例。修复建议方向错误，AI建议保持测试文件原样，但PR并未修改测试文件，且AI未提及修改exporters等关键文件，因此不可参考。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/scrapy/scrapy/issues/6805",
+    "issue_number": 6805,
+    "title": "Add a httpx-based download handler",
+    "pr_url": "https://github.com/scrapy/scrapy/pull/7239",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "用户未发现现有实现，或未正确配置。",
+      "fix_suggestion": "无需修改代码。告知用户如何配置和使用现有的HttpxDownloadHandler。",
+      "affected_files": [],
+      "severity": "low",
+      "confidence": 0.5,
+      "issue_type": "feature",
+      "feature_exists": true,
+      "existing_api": "通过配置 DOWNLOAD_HANDLERS 字典，设置 'http' 和 'https' 协议对应的处理器为 'scrapy.core.downloader.handlers._httpx.HttpxDownloadHandler'，并确保安装了 httpx 库。"
+    },
+    "scores": {
+      "root_cause_accuracy": 0.0,
+      "file_accuracy": 0.0,
+      "severity_fit": 0.167,
+      "fix_actionability": 0.0,
+      "overall": 0.0,
+      "reasoning": "AI 分析完全错误。Issue 是请求添加基于 httpx 的下载处理器，而 AI 错误地认为用户未发现现有实现或配置问题，实际 PR 实现了全新的 HttpxDownloader，新增了多个文件。AI 未识别任何受影响文件，而 PR 修改了 10 个文件。严重程度应为 feature request，AI 给出的 low 无法反映新增功能的投入。修复建议与 PR 实际添加新功能完全相反。",
+      "judge_runs": 3
+    }
+  },
+  {
+    "issue_url": "https://github.com/scrapy/scrapy/issues/4842",
+    "issue_number": 4842,
+    "title": "Document files inside JOBDIR",
+    "pr_url": "https://github.com/scrapy/scrapy/pull/5260",
+    "eval_type": "bug",
+    "ai_result": {
+      "root_cause": "JOBDIR 各文件作用：requests.seen 记录已下载请求的 SHA1 指纹，用于重复过滤；requests.queue/ 目录存储待下载请求的持久化队列，active.json 记录优先级状态，qXXXXXX 文件存储序列化的 Request 对象，info.json 记录队列元数据；spider.state 存储蜘蛛自定义状态。这些文件在爬虫启动时恢复状态，在爬虫关闭时写入，但非正常关闭可能导致数据丢失。",
+      "fix_suggestion": "当前代码行为已完整解答用户疑问，无需修复。若需改进，可考虑在文档中添加 JOBDIR 文件结构的非正式说明（标注为实现细节，可能变更），或提供工具脚本用于调试/恢复。",
+      "affected_files": [
+        "scrapy/dupefilters.py",
+        "scrapy/core/scheduler.py",
+        "scrapy/pqueues.py",
+        "scrapy/utils/job.py",
+        "scrapy/settings/default_settings.py",
+        "tests/test_dupefilters.py",
+        "tests/test_scheduler.py"
+      ],
+      "severity": "low",
+      "confidence": 0.9,
+      "issue_type": "question",
+      "feature_exists": false,
+      "existing_api": ""
+    },
+    "scores": {
+      "root_cause_accuracy": 0.833,
+      "file_accuracy": 0.683,
+      "severity_fit": 0.833,
+      "fix_actionability": 0.833,
+      "overall": 0.793,
+      "reasoning": "AI正确指出了JOBDIR文件的作用，但未提及需要文档化这一根本需求；PR实际修复是补充文档和代码注释，而非报告bug。AI列出的文件与PR修改文件部分重叠，但缺少docs/topics/下的文档文件。严重程度应为'增强'而非'低'，因为Issue是功能请求。修复建议提到了文档化，但方向不够具体，未指向实际PR中的全面文档和代码改进。",
+      "judge_runs": 3
+    }
+  }
+]
