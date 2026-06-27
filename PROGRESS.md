@@ -19,7 +19,7 @@ fetch_issue → build_project_map → describe_images → parse_stack_trace → 
   → reflect → generate_report → memory_save
 ```
 
-关键文件：`workflow/state.py`、`workflow/graph.py`、`workflow/nodes.py`
+关键文件：`workflow/state.py`、`workflow/graph.py`、`workflow/nodes/`
 
 ---
 
@@ -37,7 +37,7 @@ GET /repos/{owner}/{repo}/issues/{number}/timeline   # 关联 PR
 
 **关联 PR 拉取**：通过 Timeline API 找 `cross-referenced` 事件，提取关联 PR URL 存入 `state.related_prs`。`analyze_bug` 节点将其注入 prompt，LLM 可参考已知修复 PR 做根因定位。
 
-关键文件：`tools/github_api.py`（`_fetch_all_comments`、`_fetch_related_prs`）、`workflow/nodes.py`（`_pr_section`）
+关键文件：`tools/github_api.py`（`_fetch_all_comments`、`_fetch_related_prs`）、`workflow/nodes/fetch.py`（`_pr_section`）
 
 ---
 
@@ -47,10 +47,10 @@ GET /repos/{owner}/{repo}/issues/{number}/timeline   # 关联 PR
 
 ```python
 graph.add_conditional_edges("route_issue", decide_route, {
-    "bug":      "retrieve_context",
-    "feature":  "retrieve_context",
-    "question": "retrieve_context",
-    "security": "retrieve_context",
+    "bug":      "detect_regression",  # bug 先检查是否回归
+    "feature":  "memory_retrieve",
+    "question": "memory_retrieve",
+    "security": "human_gate",         # security 先过人工审核
 })
 ```
 
@@ -112,7 +112,7 @@ python context/rag_index.py /path/to/repo
 
 **CrossEncoder Rerank**：`cross-encoder/ms-marco-MiniLM-L-6-v2`，把 query 和 document 一起输入模型计算相关性分数，比 bi-encoder 向量检索更准确，但只在候选集上跑（top-10），保证速度。Reranker 懒加载单例，启动时不阻塞，失败时自动降级到 RRF 结果。
 
-关键文件：`context/rag_index.py`（切片），`workflow/nodes.py`（`_rrf_merge` / `_get_reranker` / `retrieve_context`）
+关键文件：`context/rag_index.py`（切片），`workflow/nodes/retrieve.py`（`_rrf_merge` / `_get_reranker` / `retrieve_context`）
 
 ---
 
@@ -134,7 +134,7 @@ def decide_reflection(state: IssueState) -> str:
 
 实测：第一次分析质量差时（置信度 0.3），自动重试，第二次结合 RAG 上下文后置信度提升至 0.85 通过。
 
-关键文件：`workflow/graph.py`（`decide_reflection`）、`workflow/nodes.py`（`reflect`）
+关键文件：`workflow/graph.py`（`decide_reflection`）、`workflow/nodes/reflect.py`（`reflect`）
 
 ---
 
@@ -179,7 +179,7 @@ results = _memory_collection.query(
 
 `where` 过滤确保不同仓库的经验不会互相干扰。空 collection 时自动 fallback 不带过滤。
 
-关键文件：`context/memory_store.py`、`workflow/nodes.py`（`memory_retrieve`、`memory_save`）
+关键文件：`context/memory_store.py`、`workflow/nodes/memory.py`（`memory_retrieve`、`memory_save`）
 
 ---
 
@@ -226,7 +226,7 @@ if result.get("__interrupt__"):
 
 测试方式：`python main.py --security`（`--security` 参数强制 `route_issue` 返回 security 类型）
 
-关键文件：`workflow/nodes.py`（`human_gate`）、`workflow/graph.py`、`main.py`
+关键文件：`workflow/nodes/route.py`（`human_gate`）、`workflow/graph.py`、`main.py`
 
 ---
 
@@ -313,7 +313,7 @@ result = vision_client.chat.completions.create(
 )
 ```
 
-关键文件：`workflow/nodes.py`（`describe_images`）
+关键文件：`workflow/nodes/fetch.py`（`describe_images`）
 
 #### Stack Trace 精确定位（`parse_stack_trace`）
 
@@ -333,15 +333,7 @@ pattern = r'File ["\']([^"\']+\.py)["\'],\s*line\s*(\d+)'
 snippet = _read_snippet(repo_path, frame["file"], frame["line"], context=15)
 ```
 
-关键文件：`tools/stack_trace.py`、`workflow/nodes.py`（`parse_stack_trace`）
-
-**当前完整节点流程**：
-
-```
-fetch_issue → describe_images → parse_stack_trace → route_issue
-  → memory_retrieve → retrieve_context → analyze_* → reflect
-  → generate_report → memory_save
-```
+关键文件：`tools/stack_trace.py`、`workflow/nodes/fetch.py`（`parse_stack_trace`）
 
 ---
 
@@ -390,7 +382,7 @@ analyze 节点从 2 个字段扩展为 7 个：
 }
 ```
 
-关键文件：`workflow/nodes.py`（`_SYSTEM_BUG` / `_SYSTEM_FEATURE` / `_SYSTEM_QUESTION` / `_SYSTEM_REFLECT`）
+关键文件：`workflow/nodes/analyze.py`（`_SYSTEM_BUG` / `_SYSTEM_FEATURE` / `_SYSTEM_QUESTION` / `_SYSTEM_REFLECT`）
 
 ---
 
@@ -441,7 +433,7 @@ def _chat(...):
 
 API 超时、限流、连接断开自动指数退避重试 3 次，3 次全败后才抛异常。
 
-关键文件：`core/llm/client.py`（`chat` / `chat_json` / `AnalyzeResult` / `CodeChange`）
+关键文件：`core/llm/client.py`（`chat` / `parse_json` / `AnalyzeResult` / `CodeChange`）
 
 ---
 
@@ -455,12 +447,16 @@ API 超时、限流、连接断开自动指数退避重试 3 次，3 次全败�
 
 原本 `client = OpenAI(...)` 在 3 个文件重复。现在统一到 `core/llm/client.py`，所有节点 import `chat` / `chat_json`，换模型或 base_url 只改 `config.py` 一行。
 
-#### nodes.py 拆分（618 行 → 7 个职责单一文件）
+#### nodes.py 拆分（618 行 → 11 个职责单一文件）
 
 | 文件 | 职责 |
 |---|---|
 | `workflow/nodes/fetch.py` | `fetch_issue` / `describe_images` / `parse_stack_trace` |
+| `workflow/nodes/project_map.py` | `build_project_map`（目录树→LLM摘要，per-repo 缓存） |
 | `workflow/nodes/route.py` | `route_issue` / `human_gate` |
+| `workflow/nodes/detect_regression.py` | `detect_regression` |
+| `workflow/nodes/detect_existing.py` | `detect_existing`（feature 专用，判断功能是否已实现） |
+| `workflow/nodes/classify_fix.py` | `classify_fix`（code_fix / dependency_upgrade / config_fix） |
 | `workflow/nodes/retrieve.py` | `retrieve_context` + RRF + Reranker |
 | `workflow/nodes/analyze.py` | `analyze_bug` / `analyze_feature` / `answer_question` |
 | `workflow/nodes/reflect.py` | `reflect` |
@@ -634,7 +630,7 @@ grep 支持 `path_hint` 子路径过滤，判断时严格要求"找到核心实�
 
 #### analyze_feature 升级
 
-从 `chat_json`（单次） → `chat_json_with_tools`（ReAct × 6 轮），system prompt 改为架构师视角：
+从 `chat_json`（单次） → `chat_json_with_tools`（ReAct × 12 轮），system prompt 改为架构师视角：
 1. 需求理解：提炼真实诉求
 2. **横向探索**：用 `grep_code` 找类似已有功能，理解实现模式（区别于 bug 的纵向追踪）
 3. 架构定位：`list_dir` / `read_file` 了解模块结构，判断新功能放哪里
@@ -648,14 +644,38 @@ grep 支持 `path_hint` 子路径过滤，判断时严格要求"找到核心实�
 **完整 graph feature 路径**：
 ```
 route_issue(feature) → memory_retrieve → retrieve_context
-  → detect_existing → analyze_feature(ReAct × 6) → reflect → generate_report
+  → detect_existing → analyze_feature(ReAct × 12) → reflect → generate_report
 ```
 
 关键文件：`workflow/nodes/analyze.py`、`workflow/state.py`、`workflow/graph.py`
 
 ---
 
-### 22. Feature Eval 基础设施
+### 22. 测试体系（`tests/`）
+
+四层测试，151 条，全部自动化：
+
+| 层级 | 文件 | 内容 | 特点 |
+|---|---|---|---|
+| 工具单测 | `test_code_nav.py` | 36条，9工具函数覆盖 | 需要本地克隆仓库，无 LLM |
+| LLM工具单测 | `test_llm_utils.py` | 34条，parse_json / AnalyzeResult / judge_question / question report | 纯函数，mock LLM，0 API 调用 |
+| 节点测试 | `test_nodes.py` | 67条，所有 analyze/route/reflect 节点 | mock LLM，有真实仓库 grep 测试 |
+| 鲁棒性测试 | `test_robustness.py` | 18条，边界输入、空路径、特殊字符 | 验证不崩溃 |
+| 端到端回归 | `test_regression.py` | 8条 | 真实 API（`-m regression`） |
+
+**端到端回归分两类**：
+- `quality`（4条）：psf/requests / pydantic / fastapi / black，答案明确，分数必须 ≥ 阈值（0.75-0.85）
+- `smoke`（4条）：celery / aiohttp / mypy / scrapy，链路复杂，只验结构合法，不卡分数
+
+```bash
+pytest tests/ --ignore=tests/test_regression.py  # 151条，~13s
+pytest tests/test_regression.py -m regression    # 8条端到端（需 API key，~10min）
+pytest tests/test_regression.py -m "regression and quality"  # 只跑质量门禁
+```
+
+---
+
+### 23. Feature / Question Eval 基础设施
 
 #### 数据集策略（`eval/dataset.py`）
 
@@ -673,29 +693,48 @@ route_issue(feature) → memory_retrieve → retrieve_context
 - `implementation_feasibility`：方案方向是否与实际 PR 一致
 - `exists_detection_accuracy`：detect_existing 是否做出正确判断
 
-#### 评估入口（`eval/run_eval.py`）
+#### Question Eval（`eval/dataset.py` / `eval/judge.py`）
 
-新增 `--type bug/feature` 参数，结果文件命名加 type 前缀：
-```bash
-python eval/run_eval.py --type feature --owner scrapy --repo scrapy --max 10
+ground truth 是维护者/贡献者的权威回复（非 PR diff）：
+
+```python
+# dataset：找带 "question"/"help wanted" 等标签的已关闭 issue，提取贡献者回复
+fetch_question_issues_with_answers(owner, repo, max_issues=20)
+# → {"issue_url", "title", "body", "resolution_comments", "key_answer"}
+
+# judge：3维度打分
+judge_question(title, body, ai_result, key_answer, n=3)
+# → confusion_identified / answer_accuracy / actionability / overall
 ```
 
-`report.py` 按 scores 字段自动识别 bug/feature 类型，输出对应格式报告。
+`_extract_key_answers` 优先取贡献者/维护者回复，过滤 <30 字短评和 issue 作者自问自答，按正文长度降序取最多 3 条。
+
+#### 评估入口（`eval/run_eval.py`）
+
+新增 `--type bug/feature/question` 参数，结果文件命名加 type 前缀：
+```bash
+python eval/run_eval.py --type feature --owner scrapy --repo scrapy --max 10
+python eval/run_eval.py --type question --owner pydantic --repo pydantic --max 10
+```
+
+`report.py` 按 `eval_type` 字段（或 scores 字段）自动识别 bug/feature/question 类型，输出对应格式报告。
 
 ---
 
 ## 完整节点流程（当前）
 
 ```
-fetch_issue → describe_images → parse_stack_trace → route_issue
-  ├─ bug  → detect_regression → memory_retrieve → retrieve_context
-  │         → classify_fix → analyze_bug（ReAct × 12轮，9工具）
-  ├─ feature → memory_retrieve → retrieve_context
-  │            → detect_existing → analyze_feature（ReAct × 12轮）
-  ├─ question → memory_retrieve → retrieve_context → answer_question（ReAct × 12轮）
+fetch_issue → build_project_map → describe_images → parse_stack_trace → route_issue
+  ├─ bug      → detect_regression → memory_retrieve → retrieve_context
+  │             → classify_fix → analyze_bug（ReAct × 12轮，9工具）
+  ├─ feature  → memory_retrieve → retrieve_context
+  │             → detect_existing → analyze_feature（ReAct × 12轮，9工具）
+  ├─ question → memory_retrieve → retrieve_context → answer_question（ReAct × 12轮，9工具）
   └─ security → human_gate → memory_retrieve → retrieve_context → classify_fix → analyze_bug
   → reflect（置信度<0.7 最多重试2次）→ generate_report → memory_save
 ```
+
+**`build_project_map`**：每次分析前，读仓库 2 层目录树 → LLM 生成 ~200 字摘要（核心源码/测试/文档在哪），注入所有分析节点的 prompt context，session 内 per-repo 缓存（~3s 首次，之后 0ms）。
 
 ---
 
@@ -757,6 +796,24 @@ fetch_issue → describe_images → parse_stack_trace → route_issue
 **平均 overall: 0.40**
 
 **重要说明**：feature eval 存在**时序缺陷**——数据集要求 issue 有已合并 PR，意味着功能已在当前 codebase 实现。`detect_existing` 在当前代码上运行，正确找到实现并返回"已存在"，但 judge 对比原始 PR（新增了大量代码）打低分，判断为误判。这是 eval 流程设计问题，不是系统问题。真正有效的 feature eval 需要在 pre-merge 快照上运行。
+
+### Question Eval — pydantic/pydantic（2026-06-28，5条，首次）
+
+| Issue | Overall | 问题识别 | 技术准确 | 可操作 |
+|---|---|---|---|---|
+| #11023 PostgresDsn 主机为空 | 0.94 | 1.00 | 1.00 | 0.83 |
+| #9557 SecretStr 类型错误 | 0.89 | 1.00 | 0.97 | 0.73 |
+| #1223 Optional 字段 v1/v2 | 0.37 | 0.50 | 0.27 | 0.33 |
+| #7581 model_copy extra=forbid | 0.27 | 0.43 | 0.20 | 0.27 |
+| #8187 frozen model set 序列化 | 0.03 | 0.17 | 0.00 | 0.00 |
+
+**平均 overall: 0.50**
+
+**规律**：两个集群——
+- **高分（0.89-0.94）**：答案是具体 API 用法或配置项，LLM 查到代码就能准确解释
+- **低分（0.03-0.37）**：维护者的回答是"这是设计决策，不改"，LLM 找到代码位置后倾向于提议修改，而不是解释设计意图并给出变通方案
+
+`answer_question` 节点已针对此问题优化 prompt（区分"使用问题"vs"设计决策问题"，使用独立的 `_JSON_FIELDS_QUESTION` 字段语义），待重测验证效果。
 
 ### 当前能力边界
 - **擅长**：有具体函数调用的代码 bug，尤其跨语言（Python → Rust dep）；feature 需求理解准确（0.7+）
