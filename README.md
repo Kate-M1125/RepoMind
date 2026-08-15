@@ -1,5 +1,7 @@
 # RepoMind
 
+> 完整的项目讲解、运行说明与设计边界见 [`docs/PROJECT_GUIDE.md`](docs/PROJECT_GUIDE.md)；逐节点详细设计见 [`docs/DETAILED_DESIGN.md`](docs/DETAILED_DESIGN.md)；面试准备见 [`docs/INTERVIEW_QA.md`](docs/INTERVIEW_QA.md)。
+
 两个功能，共用同一套底层基础设施（RAG、Memory、LangGraph、工具层）：
 
 ```bash
