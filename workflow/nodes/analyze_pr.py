@@ -7,7 +7,15 @@ from tools.base import build_tools
 from tools.code_nav import READ_FILE, GREP_CODE, LIST_DIR, FIND_CALLERS, FIND_DEFINITION
 from context.memory_store import get_memory_collection
 
-_memory_collection = get_memory_collection()
+_memory_collection = None
+
+
+def _collection():
+    """延迟初始化 Review 记忆库，报告格式化和静态审查无需加载嵌入模型。"""
+    global _memory_collection
+    if _memory_collection is None:
+        _memory_collection = get_memory_collection()
+    return _memory_collection
 
 # ── Diff 格式化 ──────────────────────────────────────────────────────
 
@@ -321,7 +329,7 @@ def memory_retrieve_pr(state: PRState) -> dict:
     owner, repo, _ = parse_pr_url(state["pr_url"])
     query = f"PR review: {state.get('title', '')}"
     try:
-        results = _memory_collection.query(
+        results = _collection().query(
             query_texts=[query],
             n_results=3,
             where={"repo": f"{owner}/{repo}", "type": "pr_review"},
@@ -350,7 +358,7 @@ def memory_save_pr(state: PRState) -> dict:
 总问题数: 安全={len(state.get('security_issues', []))} 逻辑={len(state.get('logic_issues', []))} 风格={len(state.get('style_issues', []))}
 置信度: {state.get('confidence', 0):.2f}"""
 
-    _memory_collection.upsert(
+    _collection().upsert(
         ids=[f"{owner}/{repo}#pr{number}"],
         documents=[content],
         metadatas=[{"repo": f"{owner}/{repo}", "type": "pr_review"}],

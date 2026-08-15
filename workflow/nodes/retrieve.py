@@ -4,7 +4,6 @@ from langgraph.types import Send
 from workflow.state import IssueState
 from tools.github_api import parse_issue_url
 from core.llm.client import chat
-from context.rag_index import get_repo_collection
 from context.call_graph import extract_func_names, expand_with_callees
 from context.repo_loader import ensure_repo_indexed
 from context.dep_indexer import retrieve_from_imported_deps
@@ -12,6 +11,12 @@ from tools.git_history import fetch_recent_diff, fetch_blame_diff
 from tools.code_nav import _grep_code, _read_file
 
 _reranker = None
+
+
+def get_repo_collection(owner: str, repo: str):
+    """保留可 Mock 的轻量代理，真正调用时再加载 ChromaDB 实现。"""
+    from context.rag_index import get_repo_collection as load_collection
+    return load_collection(owner, repo)
 
 
 def _get_reranker():

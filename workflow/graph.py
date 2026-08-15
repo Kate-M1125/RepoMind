@@ -3,17 +3,19 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.sqlite import SqliteSaver
 from config import settings
 from workflow.state import IssueState
-from workflow.nodes import (
-    fetch_issue, route_issue, detect_regression, detect_existing, classify_fix,
-    describe_images, parse_stack_trace,
-    build_project_map,
-    human_gate,
-    memory_retrieve, memory_save,
+from workflow.nodes.fetch import fetch_issue, describe_images, parse_stack_trace
+from workflow.nodes.route import route_issue, human_gate
+from workflow.nodes.detect_regression import detect_regression
+from workflow.nodes.detect_existing import detect_existing
+from workflow.nodes.classify_fix import classify_fix
+from workflow.nodes.project_map import build_project_map
+from workflow.nodes.memory import memory_retrieve, memory_save
+from workflow.nodes.retrieve import (
     prepare_context, dispatch_context_gather, gather_context_part, merge_context,
-    analyze_bug, analyze_feature, answer_question,
-    reflect,
-    generate_report,
 )
+from workflow.nodes.analyze import analyze_bug, analyze_feature, answer_question
+from workflow.nodes.reflect import reflect
+from workflow.nodes.report import generate_report
 
 
 def _wrap(name: str, fn):

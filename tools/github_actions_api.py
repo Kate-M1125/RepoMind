@@ -67,6 +67,29 @@ def _decode_log_response(response: httpx.Response) -> str:
     return payload[:_MAX_JOB_LOG_CHARS].decode("utf-8", errors="replace")
 
 
+def _run_source_metadata(run_data: dict, owner: str, repo: str) -> dict:
+    """确定补丁基准 Commit 和可发布分支；Fork/来源缺失的 PR 不给发布分支。"""
+    pull_requests = run_data.get("pull_requests") or []
+    pull_request = pull_requests[0] if pull_requests else {}
+    pr_head = pull_request.get("head", {})
+    pr_head_repo = pr_head.get("repo", {}) or {}
+    source_repo = pr_head_repo.get("full_name", "")
+    # Workflow Run 响应有时没有 full_name，只能从官方 API URL 恢复 owner/repo。
+    if not source_repo and "/repos/" in pr_head_repo.get("url", ""):
+        source_repo = pr_head_repo["url"].split("/repos/", 1)[1].strip("/")
+    is_pr_event = str(run_data.get("event", "")).startswith("pull_request")
+    # 来源为空时不能视为同仓库；这是面向写操作的 fail-closed 策略。
+    same_repo_pr = bool(source_repo) and source_repo.lower() == f"{owner}/{repo}".lower()
+    if not is_pr_event:
+        same_repo_pr = True
+    return {
+        "source_sha": pr_head.get("sha") or run_data.get("head_sha", ""),
+        "source_repo": source_repo or f"{owner}/{repo}",
+        "publish_base_branch": (pr_head.get("ref", "") if same_repo_pr and is_pr_event
+                                else run_data.get("head_branch", "") if not is_pr_event else ""),
+    }
+
+
 def fetch_actions_run(url: str) -> dict:
     """一次性收集第一阶段所需的 Run、失败 Job、日志和触发提交差异。"""
     owner, repo, run_id = parse_actions_run_url(url)
@@ -138,6 +161,8 @@ def fetch_actions_run(url: str) -> dict:
     except httpx.TimeoutException as exc:
         raise ValueError(f"GitHub Actions API 请求超时: {url}") from exc
 
+    source = _run_source_metadata(run_data, owner, repo)
+
     return {
         "owner": owner,
         "repo": repo,
@@ -149,6 +174,11 @@ def fetch_actions_run(url: str) -> dict:
             "conclusion": run_data.get("conclusion", ""),
             "head_branch": run_data.get("head_branch", ""),
             "head_sha": run_data.get("head_sha", ""),
+            # PR Run 优先使用真实 head commit；run.head_sha 有时是 GitHub 生成的 merge commit。
+            "source_sha": source["source_sha"],
+            "source_repo": source["source_repo"],
+            # Fork PR 不允许自动发布到原仓库分支，留空让发布门禁明确阻断。
+            "publish_base_branch": source["publish_base_branch"],
             "workflow_path": run_data.get("path", ""),
             "html_url": run_data.get("html_url", url),
         },

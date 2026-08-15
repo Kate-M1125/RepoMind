@@ -14,6 +14,67 @@ python main.py https://github.com/psf/requests/pull/6789
 
 `main.py` 自动识别 URL 格式路由到对应工作流。
 
+## CI 自动修复工作流
+
+输入 GitHub Actions Run URL 后，RepoMind 按权限分为三个阶段：
+
+```text
+只读诊断并生成候选补丁
+  → 用户确认 RUN_PATCH，在无网络临时 worktree 中测试
+  → 用户确认 CREATE_DRAFT_PR，创建修复分支和 Draft PR
+```
+
+补丁在阶段之间使用 SHA-256 锁定。验证和发布必须使用同一份补丁；摘要不一致、
+测试失败、审查阻断、Fork 来源不明确时均不会写入 GitHub。相同补丁重复发布时会
+恢复已有 Draft PR，或校验已有分支的提交标记后补建 PR，不会覆盖远端分支。
+
+Web API 的任务、阶段审计和发布结果保存在 SQLite。服务重启后历史结果仍可查询，
+被重启中断的运行态任务会明确标为失败。
+
+### 本地运行与测试
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-dev.txt
+cp .env.example .env
+pytest -q -m "not regression"
+./start_server.sh
+```
+
+只运行 CI/API 或参与核心开发时，可安装 `requirements-core.txt`；完整 Issue RAG 功能再
+安装 `requirements-rag.txt`。`requirements.txt` 会同时安装两组运行依赖。
+
+回归标记会调用真实仓库和模型，因此默认的本地验证命令排除 `regression`。RAG 的
+ChromaDB 和嵌入模型采用延迟加载，不会影响只使用 CI、PR 静态检查或 API 的进程启动。
+
+### API 鉴权
+
+生产环境在 `.env` 设置 `REPOMIND_API_KEYS`（多个 Key 用逗号分隔）。请求格式：
+
+```http
+Authorization: Bearer your-api-key
+```
+
+任务只允许创建它的 Key 查询或升级权限，数据库仅保存 Key 的短哈希。未配置 Key 时
+进入本地开发兼容模式。Web 页面可在浏览器控制台设置：
+
+```javascript
+localStorage.setItem('repomind_api_key', 'your-api-key')
+```
+
+### Docker 部署
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+服务仅绑定宿主机 `127.0.0.1:8000`，使用非 root 用户、删除 Linux capabilities、
+启用 `no-new-privileges`，并把 SQLite 与克隆仓库存入持久卷。Linux 补丁测试优先使用
+Bubblewrap 禁止网络；隔离器不可用时默认阻断，除非显式设置
+`REPOMIND_ALLOW_UNSANDBOXED_TESTS=true`。
+
 ---
 
 ## 功能一：Issue 智能分析

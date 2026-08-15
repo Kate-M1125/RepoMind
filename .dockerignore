@@ -1,0 +1,9 @@
+.git
+.venv
+__pycache__
+.pytest_cache
+.env
+repo_knowledge_base
+*.docx
+eval/results_*.json
+/tmp

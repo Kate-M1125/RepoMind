@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>RepoMind — GitHub Issue 智能分析</title>
+<title>RepoMind — GitHub Issue / CI 智能分析</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -218,6 +218,11 @@
   }
   .copy-btn:hover { background: #30363d; color: #e6edf3; }
 
+  .action-row { display: flex; gap: 10px; flex-wrap: wrap; margin: 16px 0; }
+  .action-btn.verify { background: #1f6feb; }
+  .action-btn.publish { background: #8957e5; }
+  .action-note { color: #8b949e; font-size: 12px; line-height: 1.5; }
+
   .error-box {
     background: #1a0e0e;
     border: 1px solid #f85149;
@@ -233,16 +238,15 @@
 <header>
   <span class="logo">🔍</span>
   <h1>RepoMind</h1>
-  <span>GitHub Issue 智能分析</span>
+  <span>GitHub Issue / Actions CI 智能分析</span>
 </header>
 
 <main>
   <div class="input-card">
-    <h2>输入 GitHub Issue URL，自动完成根因分析、代码定位、修复建议</h2>
+    <h2>输入 GitHub Issue 或 Actions Run URL，自动完成诊断和修复建议</h2>
     <div class="input-row">
       <input type="text" id="url-input"
-        placeholder="https://github.com/owner/repo/issues/123"
-        value="https://github.com/fastapi/fastapi/issues/13">
+        placeholder="https://github.com/owner/repo/issues/123 或 .../actions/runs/123">
       <button id="submit-btn" onclick="submitAnalysis()">开始分析</button>
     </div>
     <div id="status-bar">
@@ -256,6 +260,7 @@
 
 <script>
 let pollTimer = null;
+let currentJobId = null;
 
 async function submitAnalysis() {
   const url = document.getElementById('url-input').value.trim();
@@ -267,13 +272,17 @@ async function submitAnalysis() {
   showStatus('spinner', '正在提交任务...');
 
   try {
-    const res = await fetch('/analyze', {
+    const isCI = /github\.com\/[^/]+\/[^/]+\/actions\/runs\/\d+/.test(url);
+    const endpoint = isCI ? '/api/ci/analyze' : '/analyze';
+    const payload = isCI ? {ci_url: url} : {issue_url: url};
+    const res = await fetch(endpoint, {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({issue_url: url}),
+      headers: apiHeaders(),
+      body: JSON.stringify(payload),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const {job_id} = await res.json();
+    currentJobId = job_id;
     showStatus('spinner', '任务已提交，正在分析...');
     pollStatus(job_id);
   } catch (e) {
@@ -286,7 +295,7 @@ function pollStatus(jobId) {
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(async () => {
     try {
-      const res = await fetch(`/jobs/${jobId}`);
+      const res = await fetch(`/jobs/${jobId}`, {headers: apiHeaders(false)});
       const job  = await res.json();
 
       if (job.status === 'running') {
@@ -294,7 +303,7 @@ function pollStatus(jobId) {
       } else if (job.status === 'done') {
         clearInterval(pollTimer);
         showStatus('done', '分析完成');
-        renderResult(job.result);
+        renderResult(job.result, job, jobId);
         document.getElementById('submit-btn').disabled = false;
       } else if (job.status === 'failed') {
         clearInterval(pollTimer);
@@ -327,11 +336,15 @@ function severityClass(s) {
   return `severity-${s || 'medium'}`;
 }
 
-function renderResult(r) {
+function renderResult(r, job, jobId) {
   if (!r) return;
+  if (job && job.task_type === 'ci') {
+    renderCIResult(r, job, jobId);
+    return;
+  }
 
   const conf = Math.round((r.confidence || 0) * 100);
-  const labels = (r.suggested_labels || []).map(l => `<span class="tag">${l}</span>`).join('');
+  const labels = (r.suggested_labels || []).map(l => `<span class="tag">${esc(l)}</span>`).join('');
   const files  = (r.affected_files || []).map(f =>
     `<li><span class="file-path">${esc(f)}</span></li>`).join('') || '<li>暂未确定</li>';
   const changes = (r.code_changes || []).map(c =>
@@ -390,13 +403,91 @@ function renderResult(r) {
       <h3>完整报告
         <button class="copy-btn" onclick="copyReport()">复制</button>
       </h3>
-      <pre class="report-pre" id="report-text">${esc(r.final_report)}</pre>
+      <pre class="report-pre" id="report-text">${escPre(r.final_report)}</pre>
     </div>
   `;
 
   const el = document.getElementById('result');
   el.innerHTML = html;
   el.className = 'visible';
+}
+
+function renderCIResult(r, job, jobId) {
+  const conf = Math.round((r.confidence || 0) * 100);
+  const patchFiles = (r.patch_files || []).map(f =>
+    `<span class="tag">${esc(f)}</span>`).join('') || '无';
+  const reviewIssues = (r.patch_review_issues || []).map(i =>
+    `<div class="change-item"><strong>${esc((i.severity || 'medium').toUpperCase())}</strong>
+      [${esc(i.category)}] ${esc(i.file || '')} — ${esc(i.description)}</div>`
+  ).join('') || '<p>未发现阻断问题</p>';
+  // 审计轨迹来自后端追加式记录，时间转换只影响显示，不改变原始 UTC 值。
+  const stageHistory = (job.stage_history || []).map(item => {
+    const time = item.timestamp ? new Date(item.timestamp).toLocaleString() : '-';
+    const digest = item.patch_sha256 ? ` · ${esc(item.patch_sha256.slice(0, 12))}` : '';
+    return `<div class="change-item"><strong>${esc(item.stage || '-')}</strong>
+      ${esc(item.status || '-')} · ${esc(time)}${digest}</div>`;
+  }).join('') || '<p>暂无阶段记录</p>';
+  const canVerify = job.permission_level === 'analyze' && r.patch_status === 'valid';
+  const canPublish = job.permission_level === 'verify' &&
+    r.verification_status === 'passed' && r.patch_review_status !== 'blocked';
+  const actions = `
+    <div class="action-row">
+      ${canVerify ? '<button class="action-btn verify" onclick="runCIStage(\'verify\')">在隔离环境验证补丁</button>' : ''}
+      ${canPublish ? '<button class="action-btn publish" onclick="runCIStage(\'publish\')">创建 Draft PR</button>' : ''}
+      ${safeGithubUrl(r.draft_pr_url) ? `<a href="${escPre(r.draft_pr_url)}" target="_blank" rel="noopener"><button>打开 Draft PR</button></a>` : ''}
+    </div>
+    <p class="action-note">验证会运行目标仓库代码；发布会写入 GitHub。每一步都需要单独确认。</p>`;
+
+  const html = `
+    <div class="meta-grid">
+      <div class="meta-card"><div class="label">CI Run</div><div class="value">#${r.run_id || '-'}</div></div>
+      <div class="meta-card"><div class="label">失败类型</div><div class="value">${esc(r.failure_type || '-')}</div></div>
+      <div class="meta-card"><div class="label">补丁状态</div><div class="value">${esc(r.patch_status || '-')}</div></div>
+      <div class="meta-card"><div class="label">置信度</div><div class="value">${conf}%</div></div>
+      <div class="meta-card"><div class="label">测试验证</div><div class="value">${esc(r.verification_status || '未执行')}</div></div>
+      <div class="meta-card"><div class="label">补丁审查</div><div class="value">${esc(r.patch_review_status || '未执行')}</div></div>
+      <div class="meta-card"><div class="label">补丁摘要</div><div class="value" title="${esc(r.patch_sha256 || '')}">${esc((r.patch_sha256 || '-').slice(0, 12))}</div></div>
+    </div>
+    ${actions}
+    <div class="section"><h3>根因</h3><p>${esc(r.root_cause)}</p></div>
+    <div class="section"><h3>修复建议</h3><p>${esc(r.fix_suggestion)}</p></div>
+    <div class="section"><h3>补丁文件</h3><div>${patchFiles}</div></div>
+    <div class="section"><h3>补丁审查</h3>${reviewIssues}</div>
+    <div class="section"><h3>执行审计</h3>${stageHistory}</div>
+    <div class="section"><h3>候选补丁</h3><pre class="report-pre">${escPre(r.patch || '未生成补丁')}</pre></div>
+    <div class="section"><h3>完整报告
+      <button class="copy-btn" onclick="copyReport()">复制</button></h3>
+      <pre class="report-pre" id="report-text">${escPre(r.final_report)}</pre></div>`;
+  const el = document.getElementById('result');
+  el.innerHTML = html;
+  el.className = 'visible';
+  currentJobId = jobId;
+}
+
+async function runCIStage(stage) {
+  if (!currentJobId) return;
+  const publishing = stage === 'publish';
+  const message = publishing
+    ? '确认创建远程修复分支和 Draft PR？此操作会写入 GitHub。'
+    : '确认在隔离 worktree 中应用补丁并运行目标仓库测试？';
+  if (!window.confirm(message)) return;
+  const confirmation = publishing ? 'CREATE_DRAFT_PR' : 'RUN_PATCH';
+  document.querySelectorAll('.action-btn').forEach(btn => btn.disabled = true);
+  showStatus('spinner', publishing ? '正在验证并创建 Draft PR...' : '正在隔离环境运行测试...');
+  try {
+    const res = await fetch(`/api/ci/tasks/${currentJobId}/${stage}`, {
+      method: 'POST', headers: apiHeaders(),
+      body: JSON.stringify({confirmation}),
+    });
+    if (!res.ok) {
+      const detail = await res.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${res.status}`);
+    }
+    pollStatus(currentJobId);
+  } catch (e) {
+    showStatus('failed', `操作失败: ${e.message}`);
+    document.querySelectorAll('.action-btn').forEach(btn => btn.disabled = false);
+  }
 }
 
 function renderError(msg) {
@@ -415,13 +506,35 @@ function copyReport() {
 }
 
 function esc(s) {
+  return escPre(s).replace(/\n/g,'<br>');
+}
+
+// 部署启用 REPOMIND_API_KEYS 后，可在浏览器控制台设置：
+// localStorage.setItem('repomind_api_key', '...')。原始 Key 不进入 URL 或任务记录。
+function apiHeaders(withJson = true) {
+  const headers = withJson ? {'Content-Type': 'application/json'} : {};
+  const key = localStorage.getItem('repomind_api_key');
+  if (key) headers.Authorization = `Bearer ${key}`;
+  return headers;
+}
+
+function safeGithubUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && url.hostname === 'github.com';
+  } catch (_) {
+    return false;
+  }
+}
+
+// pre 元素本身会保留换行，因此这里只做 HTML 转义，避免破坏补丁原文。
+function escPre(s) {
   if (!s) return '';
   return String(s)
     .replace(/&/g,'&amp;')
     .replace(/</g,'&lt;')
     .replace(/>/g,'&gt;')
-    .replace(/"/g,'&quot;')
-    .replace(/\n/g,'<br>');
+    .replace(/"/g,'&quot;');
 }
 
 // Enter 键触发

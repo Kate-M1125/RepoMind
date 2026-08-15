@@ -2,21 +2,30 @@ from workflow.state import IssueState
 from tools.github_api import parse_issue_url
 from context.memory_store import get_memory_collection
 
-_memory_collection = get_memory_collection()
+_memory_collection = None
+
+
+def _collection():
+    """首次真正访问记忆节点时才加载嵌入模型，普通 API/单测导入不承担该成本。"""
+    global _memory_collection
+    if _memory_collection is None:
+        _memory_collection = get_memory_collection()
+    return _memory_collection
 
 
 def memory_retrieve(state: IssueState) -> dict:
+    collection = _collection()
     owner, repo, _ = parse_issue_url(state["issue_url"])
     query = f"{state['issue_type']}: {state['title']}"
     try:
-        results = _memory_collection.query(
+        results = collection.query(
             query_texts=[query],
             n_results=5,
             where={"repo": f"{owner}/{repo}"},
         )
         docs = results["documents"][0] if results["documents"] else []
     except Exception:
-        results = _memory_collection.query(query_texts=[query], n_results=5)
+        results = collection.query(query_texts=[query], n_results=5)
         docs = results["documents"][0] if results["documents"] else []
     return {"memory_context": "\n\n---\n\n".join(docs) if docs else ""}
 
@@ -31,7 +40,7 @@ def memory_save(state: IssueState) -> dict:
 涉及文件: {affected}
 置信度: {state.get('confidence', 0):.2f}"""
 
-    _memory_collection.upsert(
+    _collection().upsert(
         ids=[f"{owner}/{repo}#{number}"],
         documents=[content],
         metadatas=[{

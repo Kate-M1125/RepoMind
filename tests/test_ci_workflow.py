@@ -1,4 +1,4 @@
-"""CI Failure 第一阶段：URL、日志解析、API 映射、节点与图结构测试。"""
+"""CI Failure：URL、日志解析、API 映射、节点与图结构测试。"""
 import io
 import os
 import zipfile
@@ -35,6 +35,28 @@ def _ci_state(**overrides):
         "confidence": 0.8,
         "reflection_note": "证据充分",
         "iteration": 0,
+        "patch": "",
+        "patch_files": [],
+        "patch_explanation": "",
+        "patch_risk": "unknown",
+        "patch_status": "",
+        "patch_errors": [],
+        "patch_attempt": 0,
+        "patch_history": [],
+        "execute_patch": False,
+        "verification_status": "skipped",
+        "test_command": [],
+        "targeted_test_result": {"status": "skipped"},
+        "regression_test_result": {"status": "skipped"},
+        "patch_review_issues": [],
+        "patch_review_status": "",
+        "patch_review_confidence": 0.0,
+        "create_pr": False,
+        "publish_status": "",
+        "published_branch": "",
+        "published_commit": "",
+        "draft_pr_url": "",
+        "publish_error": "",
         "final_report": "",
         "error": None,
     }
@@ -150,11 +172,13 @@ class TestCiNodes:
 
 class TestCiGraph:
     def test_graph_contains_first_phase_nodes(self):
+        """防止后续重构意外删除诊断、修订、审查或报告节点。"""
         from workflow.ci_graph import ci_app
         nodes = set(ci_app.get_graph().nodes)
         expected = {
             "fetch_ci_run", "parse_failure_logs", "build_project_map",
             "collect_ci_context", "analyze_ci_failure", "reflect_ci",
-            "generate_ci_report",
+            "generate_patch", "validate_patch", "verify_patch", "revise_patch",
+            "review_patch", "publish_patch", "generate_ci_report",
         }
         assert expected.issubset(nodes)
