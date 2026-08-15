@@ -2,8 +2,8 @@ name: tests
 
 on:
   pull_request:
+  # 分支首次引入本工作流时 pull_request 事件可能尚不可用；push 也运行可立即自证。
   push:
-    branches: [main]
 
 permissions:
   contents: read
