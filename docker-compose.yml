@@ -1,0 +1,22 @@
+services:
+  repomind:
+    build: .
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:?set DEEPSEEK_API_KEY in .env}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:?set GITHUB_TOKEN in .env}
+      REPOMIND_API_KEYS: ${REPOMIND_API_KEYS:?set REPOMIND_API_KEYS in .env}
+      REPOMIND_JOB_DB: /data/jobs/api_jobs.sqlite
+      REPOMIND_MAX_ACTIVE_JOBS: "4"
+    volumes:
+      - repomind-data:/data
+    init: true
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+volumes:
+  repomind-data:

@@ -2,9 +2,7 @@ import sys
 import ast
 import re
 from pathlib import Path
-from typing import Optional
-import chromadb
-from chromadb.utils import embedding_functions
+from typing import Any, Optional
 
 EXTENSIONS = {".py", ".ts", ".js", ".md", ".go", ".java", ".rs"}
 
@@ -25,18 +23,20 @@ def _classify_file(rel_path: str) -> str:
     return "source"
 
 # 懒加载 ChromaDB 客户端单例
-_chroma_client: Optional[chromadb.PersistentClient] = None
+_chroma_client: Optional[Any] = None
 
 
-def _get_chroma_client() -> chromadb.PersistentClient:
+def _get_chroma_client():
     global _chroma_client
     if _chroma_client is None:
+        import chromadb
         from config import settings
         _chroma_client = chromadb.PersistentClient(path=str(settings.db_path))
     return _chroma_client
 
 
 def _make_ef():
+    from chromadb.utils import embedding_functions
     return embedding_functions.SentenceTransformerEmbeddingFunction(
         model_name="all-MiniLM-L6-v2"
     )
